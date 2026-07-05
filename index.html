@@ -315,6 +315,7 @@
         <button data-theme="day" aria-label="ثيم نهاري">☀️</button>
       </div>
       <button class="icon-btn hidden" id="installBtn" aria-label="تثبيت التطبيق">⬇</button>
+      <button class="icon-btn hidden" id="notifyBtn" aria-label="تفعيل الإشعارات">🔔</button>
       <button class="icon-btn" id="openReports" aria-label="التقارير">📊</button>
       <button class="icon-btn" id="openSettings" aria-label="القالب الأسبوعي">⚙</button>
     </div>
@@ -1356,31 +1357,77 @@
     $('iconLink').setAttribute('href', icon192);
     $('appleIconLink').setAttribute('href', icon192);
 
-    // Minimal offline-cache service worker, registered from a Blob URL.
+    // Real service worker file (needed for Push Notifications to work).
+    // Must be served from the same origin at /sw.js
     if('serviceWorker' in navigator){
-      const swSource = `
-        const CACHE = 'ayyam-cache-v1';
-        self.addEventListener('install', e => { self.skipWaiting(); });
-        self.addEventListener('activate', e => { self.clients.claim(); });
-        self.addEventListener('fetch', e => {
-          e.respondWith(
-            caches.open(CACHE).then(cache =>
-              cache.match(e.request).then(resp =>
-                resp || fetch(e.request).then(networkResp => {
-                  if(e.request.method === 'GET'){ cache.put(e.request, networkResp.clone()); }
-                  return networkResp;
-                }).catch(()=> resp)
-              )
-            )
-          );
-        });
-      `;
-      try{
-        const swBlob = new Blob([swSource], {type:'application/javascript'});
-        const swUrl = URL.createObjectURL(swBlob);
-        navigator.serviceWorker.register(swUrl).catch(()=>{ /* offline caching unavailable in this context */ });
-      }catch(e){ /* service worker registration not supported here */ }
+      navigator.serviceWorker.register('/sw.js').catch(()=>{ /* SW registration failed */ });
     }
+
+    // ---------- Push notifications setup ----------
+    const VAPID_PUBLIC_KEY = 'BCY4afO3Fnq8NwvDvCjvwFhVQQi0OY0VXnvDj20bnBJZvR-1BZbNXNOUo3HKFr0X1WYhEWcDTQs64uQH8iT7rl4';
+
+    function urlBase64ToUint8Array(base64String){
+      const padding = '='.repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for(let i=0; i<rawData.length; i++){ outputArray[i] = rawData.charCodeAt(i); }
+      return outputArray;
+    }
+
+    async function isPushSupported(){
+      return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    }
+
+    async function getExistingPushSubscription(){
+      if(!(await isPushSupported())) return null;
+      const reg = await navigator.serviceWorker.ready;
+      return reg.pushManager.getSubscription();
+    }
+
+    async function subscribeToPush(){
+      if(!(await isPushSupported())){
+        alert('الإشعارات غير مدعومة في هذا المتصفح.');
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      if(permission !== 'granted'){
+        alert('لم يتم منح إذن الإشعارات.');
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if(!sub){
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+        });
+      }
+      const json = sub.toJSON();
+      try{
+        await sb.from('push_subscriptions').insert({
+          endpoint: json.endpoint,
+          p256dh: json.keys.p256dh,
+          auth: json.keys.auth
+        });
+      }catch(e){
+        // endpoint already exists (unique constraint) or network issue — safe to ignore
+      }
+      $('notifyBtn').textContent = '🔔✓';
+      $('notifyBtn').setAttribute('aria-label','الإشعارات مفعّلة');
+    }
+
+    async function setupNotifyButton(){
+      if(!(await isPushSupported())) return; // keep hidden if unsupported
+      $('notifyBtn').classList.remove('hidden');
+      const existing = await getExistingPushSubscription();
+      if(existing){
+        $('notifyBtn').textContent = '🔔✓';
+        $('notifyBtn').setAttribute('aria-label','الإشعارات مفعّلة');
+      }
+      $('notifyBtn').addEventListener('click', subscribeToPush);
+    }
+    setupNotifyButton();
 
     // Install prompt handling
     let deferredPrompt = null;
