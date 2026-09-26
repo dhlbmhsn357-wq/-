@@ -16,6 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="js/storage.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
 <style>
   :root{
@@ -585,12 +586,15 @@
     if(!el) return;
     const map = {
       idle:   {text:'', show:false},
-      syncing:{text:'⏳ جارِ الحفظ...', show:true},
-      saved:  {text:'☁️ تم الحفظ', show:true},
-      error:  {text:'⚠️ تعذّر الحفظ - محفوظ محليًا', show:true},
-      offline:{text:'📴 غير متصل - محفوظ محليًا', show:true},
+      syncing:{text:'⏳ جارِ المزامنة...', show:true},
+      saved:  {text:'☁️ تمت المزامنة', show:true},
+      error:  {text:'⚠️ تعذّرت المزامنة — محفوظ على الجهاز', show:true},
+      offline:{text:'📴 غير متصل — محفوظ على الجهاز، سيُرفع لاحقًا', show:true},
     };
-    const s = map[syncState] || map.idle;
+    // A failed local save takes precedence: never show "saved" when the device could not store it.
+    const s = storageError
+      ? {text:'⚠️ تعذّر الحفظ على الجهاز — التغيير في الذاكرة فقط', show:true}
+      : (map[syncState] || map.idle);
     el.textContent = s.text;
     el.classList.toggle('hidden', !s.show);
     if(syncState==='saved'){
@@ -599,53 +603,87 @@
     }
   }
 
-  function localCacheSave(bundle){
-    try{
-      localStorage.setItem(LS_CACHE, JSON.stringify(bundle));
-      // the old per-key copies (pre-sync versions) only duplicated this data; drop them once it's saved
-      localStorage.removeItem(LS_TPL);
-      localStorage.removeItem(LS_LOG);
-      localStorage.removeItem(LS_PREFS);
-    }catch(e){}
+  // ---------- durable local storage (IndexedDB primary, localStorage as fallback mirror) ----------
+  // The IndexedDB store is the local source of truth. localStorage keeps a best-effort mirror so an
+  // old cache is still readable and so the app still works if IndexedDB is blocked (private mode).
+  // Rule: a save is only reported successful once the durable write actually completes.
+  const PENDING_OP = 'pending-bundle'; // single outbox record = "local has changes not yet on the server"
+  let store = null;            // AyyamStore instance, or null in degraded (localStorage-only) mode
+  let storageDegraded = false; // true once we know IndexedDB is unusable
+  let syncBase = null;         // last confirmed server bundle, kept in memory for the sync engine
+  let pendingMem = false;      // "there are unsynced local changes"
+
+  function lsMirror(bundle){ // best-effort, never throws
+    try{ localStorage.setItem(LS_CACHE, JSON.stringify(bundle)); }catch(e){}
   }
-  function localCacheLoad(){
+  function lsReadBundle(){
+    try{ const raw = localStorage.getItem(LS_CACHE); if(raw) return sanitizeBundle(JSON.parse(raw)); }catch(e){}
     try{
-      const raw = localStorage.getItem(LS_CACHE);
-      if(raw) return sanitizeBundle(JSON.parse(raw));
-    }catch(e){}
-    // fall back to legacy separate keys (first-ever run migrating from old version)
-    try{
-      const t = localStorage.getItem(LS_TPL);
-      const l = localStorage.getItem(LS_LOG);
-      const p = localStorage.getItem(LS_PREFS);
-      if(t || l || p){
-        return sanitizeBundle({
-          template: t ? JSON.parse(t) : defaultTemplate(),
-          logs: l ? JSON.parse(l) : {},
-          prefs: p ? JSON.parse(p) : defaultPrefs(),
-        });
-      }
+      const t = localStorage.getItem(LS_TPL), l = localStorage.getItem(LS_LOG), p = localStorage.getItem(LS_PREFS);
+      if(t || l || p) return sanitizeBundle({ template: t?JSON.parse(t):defaultTemplate(), logs: l?JSON.parse(l):{}, prefs: p?JSON.parse(p):defaultPrefs() });
     }catch(e){}
     return null;
   }
 
-  function loadBase(){
-    try{
-      const raw = localStorage.getItem(LS_BASE);
-      if(raw) return sanitizeBundle(JSON.parse(raw));
-    }catch(e){}
-    return null;
+  // Persist a user edit: state + a single pending marker, atomically. Throws if it cannot be made
+  // durable (so the caller shows a warning and never claims "saved"). Keeps a localStorage mirror.
+  async function persistLocalEdit(bundle){
+    if(store){
+      await store.saveStateAndEnqueue(bundle, { op_id: PENDING_OP, reason: 'sync', base_revision: null });
+      lsMirror(bundle);
+      return;
+    }
+    // degraded: localStorage only. If that throws (quota/blocked) the edit is NOT durable → surface it.
+    localStorage.setItem(LS_CACHE, JSON.stringify(bundle));
+    try{ localStorage.setItem(LS_PENDING, '1'); }catch(e){}
   }
-  function saveBase(b){ try{ localStorage.setItem(LS_BASE, JSON.stringify(b)); }catch(e){} }
+  // Persist state adopted from the server (no new pending marker). Best-effort mirror; store is primary.
+  async function persistState(bundle){
+    if(store){ await store.saveState(bundle); lsMirror(bundle); return; }
+    lsMirror(bundle);
+  }
+  async function persistBase(base){
+    syncBase = base; // pure bundle (merge3 base)
+    if(store){ try{ await store.putBase({ data: base, revision: null, epoch: null }); }catch(e){} }
+    try{ localStorage.setItem(LS_BASE, JSON.stringify(base)); }catch(e){}
+  }
+  function loadBaseSync(){ return syncBase; }
 
-  let pendingMem = false; // mirrors LS_PENDING in case localStorage is unavailable
-  function isPending(){
-    try{ if(localStorage.getItem(LS_PENDING)==='1') return true; }catch(e){}
-    return pendingMem;
-  }
+  function isPending(){ return pendingMem; }
   function setPending(on){
     pendingMem = on;
-    try{ on ? localStorage.setItem(LS_PENDING,'1') : localStorage.removeItem(LS_PENDING); }catch(e){}
+    if(on){ try{ localStorage.setItem(LS_PENDING,'1'); }catch(e){} }
+    else { try{ localStorage.removeItem(LS_PENDING); }catch(e){} }
+  }
+  // Clear the durable pending marker and record the confirmed base once the server has our changes.
+  async function clearPending(base, state){
+    setPending(false);
+    if(store){ try{ await store.confirmOutbox(PENDING_OP, base, state); }catch(e){} }
+  }
+
+  // Open IndexedDB, migrate once from localStorage (non-destructive), and load state + base.
+  // Returns { state, degraded }. On any IndexedDB failure we fall back to localStorage and warn.
+  async function initStorage(){
+    try{
+      if(!(typeof AyyamStore !== 'undefined' && AyyamStore.available())) throw new Error('no idb');
+      store = await AyyamStore.open();
+      const mig = await store.migrateFromLocalStorage(k=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } }, sanitizeBundle);
+      let state = await store.getState();
+      const base = await store.getBase();
+      if(base && base.data){ syncBase = sanitizeBundle(base.data); } // pure bundle for merge3
+      pendingMem = (await store.outboxCount()) > 0;
+      if(mig.migrated && mig.hadPending) pendingMem = true;
+      if(state) state = sanitizeBundle(state);
+      store.logDiag({ type:'startup', migrated: mig.migrated, pending: pendingMem });
+      return { state, degraded:false };
+    }catch(e){
+      // IndexedDB unavailable (private mode / blocked / quota). Keep working from localStorage.
+      store = null; storageDegraded = true;
+      const state = lsReadBundle();
+      try{ if(localStorage.getItem(LS_PENDING)==='1') pendingMem = true; }catch(_){}
+      try{ const raw = localStorage.getItem(LS_BASE); if(raw) syncBase = sanitizeBundle(JSON.parse(raw)); }catch(_){}
+      return { state, degraded:true };
+    }
   }
 
   function defaultPrefs(){ return {theme:'night', bgOn:true, bgOpacity:72, bgBlur:0, location:null}; }
@@ -785,9 +823,9 @@
   function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; }
 
   // Replaces in-memory state (e.g. with changes pulled from another device) and refreshes the visible view.
-  function adoptState(s){
+  async function adoptState(s){
     setState(s);
-    localCacheSave(s);
+    await persistState(s);
     applyPrefs();
     if(!$('mainView').classList.contains('hidden')) render();
     if(!$('settingsView').classList.contains('hidden')){ renderTplDays(); renderTplTasks(); }
@@ -813,7 +851,7 @@
       const remote = data && data.data ? sanitizeBundle(data.data) : null;
       // No saved base yet (this device never synced): normally the server is the truth — except when
       // only this device has real activity (e.g. the server copy is a fresh default), then local wins.
-      let base = loadBase();
+      let base = loadBaseSync();
       if(!base){
         const active = b => Object.values(b.logs).some(logHasActivity);
         if(pending) base = {};
@@ -827,13 +865,13 @@
           SYNC_TIMEOUT_MS);
         if(upErr) throw upErr;
       }
-      saveBase(merged);
+      await persistBase(merged);
       // Edits made while this sync was in flight are re-applied on top of the merged result.
       const current = snapshot();
       const next = changeSeq===seqAtStart ? merged : sanitizeBundle(merge3(sent, current, merged));
-      if(!deepEqual(next, current)) adoptState(next);
+      if(!deepEqual(next, current)) await adoptState(next);
       if(changeSeq===seqAtStart){
-        setPending(false);
+        await clearPending(merged, next);   // durably clear the outbox now the server has our changes
         if(pending) syncState = 'saved';
       }
     }catch(e){
@@ -845,12 +883,26 @@
     }
   }
 
-  // Saves locally first (instant, survives reloads/offline), then syncs to Supabase shortly after.
-  function saveBundle(){
+  // Saves locally first (durably, survives reloads/offline), then syncs to Supabase shortly after.
+  // If the durable local write fails we still try the cloud (so the change is not lost) but keep a
+  // clear warning up — we never claim the change was saved when it was not.
+  let storageError = false, storageWarned = false;
+  async function saveBundle(){
     changeSeq++;
     setPending(true);
-    localCacheSave(currentBundle());
     syncState = 'syncing';
+    updateSyncBadge();
+    try{
+      await persistLocalEdit(currentBundle());
+      storageError = false;
+    }catch(e){
+      storageError = true;
+      if(store) store.logDiag({ type:'storage-error', message: String(e && e.name || e) });
+      if(!storageWarned){
+        storageWarned = true;
+        alert('تعذّر حفظ التغيير على هذا الجهاز (قد تكون المساحة ممتلئة أو التخزين محظورًا). سنحاول رفعه إلى السحابة، لكن يُفضّل تصدير نسخة احتياطية.');
+      }
+    }
     updateSyncBadge();
     clearTimeout(saveTimer);
     saveTimer = setTimeout(syncNow, 600);
@@ -1833,9 +1885,10 @@
   }
   setupPWA();
 
-  // ---------- initial data load (local first, then merge with Supabase) ----------
+  // ---------- initial data load (durable local first, then merge with Supabase) ----------
   const loadingEl = document.getElementById('loadingOverlay');
-  const cached = localCacheLoad();
+  const init = await initStorage();          // open IndexedDB, migrate from localStorage once
+  const cached = init.state;
   if(cached) setState(cached);
   applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
   if(cached){
