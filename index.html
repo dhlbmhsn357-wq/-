@@ -439,8 +439,7 @@
       </p>
       <p class="report-hint" id="locationInfo"></p>
       <div class="sheet-actions" style="margin-top:0;">
-        <button class="btn ghost" id="useMyLocation">استخدم موقعي الحالي</button>
-        <button class="btn ghost" id="resetLocation">القاهرة (افتراضي)</button>
+        <button class="btn ghost" id="useMyLocation">تحديث موقعي الآن</button>
       </div>
     </div>
 
@@ -922,8 +921,8 @@
     const locInfo = document.getElementById('locationInfo');
     if(locInfo){
       locInfo.textContent = prefs.location
-        ? `المواقيت محسوبة لموقعك (${toArabicNum(prefs.location.lat.toFixed(2))}، ${toArabicNum(prefs.location.lng.toFixed(2))})`
-        : 'المواقيت محسوبة حاليًا للقاهرة.';
+        ? `المواقيت محسوبة لموقعك (${toArabicNum(prefs.location.lat.toFixed(3))}، ${toArabicNum(prefs.location.lng.toFixed(3))})، ويتحدّث تلقائيًا كل ما تفتح التطبيق في مكان جديد.`
+        : 'لم يُحدَّد موقعك بعد، فالمواقيت محسوبة للقاهرة. اضغط «تحديث موقعي الآن» واسمح بالوصول للموقع.';
     }
   }
 
@@ -1616,24 +1615,47 @@
     applyPrefs();
   });
 
-  // prayer-times location (rounded to ~1 km: plenty for prayer times, and keeps the exact spot private)
-  $('useMyLocation').addEventListener('click', ()=>{
-    if(!navigator.geolocation){ alert('تحديد الموقع غير مدعوم في هذا المتصفح.'); return; }
+  // ---------- prayer-times location ----------
+  // Reminders are computed on the server from the last saved location, so keep it current:
+  // it refreshes silently every time the app is opened (once location access is allowed)
+  // and is saved only when you've actually moved, so it doesn't cause a sync on every open.
+  const LS_GEO_ASKED = 'ayyam_geo_asked_v1';
+  const r3 = v => Math.round(v*1000)/1000; // ~100 m
+  function kmBetween(a, b){
+    const R = 6371, rad = x => x*Math.PI/180;
+    const dLat = rad(b.lat-a.lat), dLng = rad(b.lng-a.lng);
+    const h = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLng/2)**2;
+    return 2*R*Math.asin(Math.sqrt(h));
+  }
+  function refreshLocation(interactive){
+    if(!navigator.geolocation){ if(interactive) alert('تحديد الموقع غير مدعوم في هذا المتصفح.'); return; }
     navigator.geolocation.getCurrentPosition((pos)=>{
-      const r2 = v => Math.round(v*100)/100;
-      prefs.location = {
-        lat: r2(pos.coords.latitude), lng: r2(pos.coords.longitude),
+      const next = {
+        lat: r3(pos.coords.latitude), lng: r3(pos.coords.longitude),
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Africa/Cairo',
       };
+      const cur = prefs.location;
+      if(!interactive && cur && cur.tz===next.tz && kmBetween(cur, next) < 1) return; // hasn't moved
+      prefs.location = next;
       savePrefs(prefs);
       applyPrefs();
-    }, ()=> alert('تعذّر تحديد موقعك. تأكد من السماح للتطبيق بالوصول للموقع.'), {timeout:15000, maximumAge:600000});
-  });
-  $('resetLocation').addEventListener('click', ()=>{
-    prefs.location = null;
-    savePrefs(prefs);
-    applyPrefs();
-  });
+    }, ()=>{
+      if(interactive) alert('تعذّر تحديد موقعك. تأكد من السماح للتطبيق بالوصول للموقع وأن الـ GPS مفعّل.');
+    }, {timeout:15000, maximumAge: interactive ? 0 : 5*60*1000, enableHighAccuracy:false});
+  }
+  async function autoRefreshLocation(){
+    let state = 'unknown';
+    try{ state = (await navigator.permissions.query({name:'geolocation'})).state; }catch(e){}
+    if(state==='granted'){ refreshLocation(false); return; }
+    // Ask once by itself — only when notifications are on, since that's what the location is for.
+    if(state==='prompt' && 'Notification' in window && Notification.permission==='granted'){
+      let asked = false;
+      try{ asked = localStorage.getItem(LS_GEO_ASKED)==='1'; localStorage.setItem(LS_GEO_ASKED,'1'); }catch(e){}
+      if(!asked) refreshLocation(false);
+    }
+  }
+  $('useMyLocation').addEventListener('click', ()=> refreshLocation(true));
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') autoRefreshLocation(); });
 
   // data management
   $('exportData').addEventListener('click', ()=>{
@@ -1776,6 +1798,7 @@
       }
       $('notifyBtn').textContent = '🔔✓';
       $('notifyBtn').setAttribute('aria-label','الإشعارات مفعّلة');
+      autoRefreshLocation();
     }
 
     async function setupNotifyButton(){
@@ -1828,6 +1851,7 @@
     render();
   }
   updateSyncBadge();
+  autoRefreshLocation();
 })();
 </script>
 </body>
