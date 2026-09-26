@@ -1,2 +1,3 @@
 supabase/functions/.env
 supabase/.temp/
+supabase/.secrets.env
