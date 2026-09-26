@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
 <style>
   :root{
     --bg:#12161c;
@@ -627,6 +627,7 @@
   // value can never crash rendering (it is dropped or replaced with a safe default).
   const isObj = v => v!==null && typeof v==='object' && !Array.isArray(v);
   const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const EPOCH_KEY = '0000-00-00'; // sorts before every real date key
 
   function cleanTask(t){
     if(!isObj(t) || typeof t.id!=='string' || !t.id) return null;
@@ -653,21 +654,35 @@
     });
     return r;
   }
+  function cleanTemplate(t){
+    if(!isObj(t)) return defaultTemplate();
+    const out = {};
+    DAY_CODES.forEach(c=> out[c] = cleanList(t[c]));
+    return out;
+  }
+  function logHasActivity(l){
+    return Object.keys(l.done).length || l.extra.length || Object.keys(l.hidden).length || Object.keys(l.overrides).length;
+  }
   function sanitizeBundle(raw){
     const src = isObj(raw) ? raw : {};
-    let template;
-    if(isObj(src.template)){
-      template = {};
-      DAY_CODES.forEach(c=> template[c] = cleanList(src.template[c]));
-    } else {
-      template = defaultTemplate();
-    }
+    const template = cleanTemplate(src.template);
     const logs = {};
     if(isObj(src.logs)) Object.keys(src.logs).forEach(k=>{
       const l = src.logs[k];
       if(!DATE_KEY_RE.test(k) || !isObj(l)) return;
-      logs[k] = { done: cleanFlags(l.done), extra: cleanList(l.extra), hidden: cleanFlags(l.hidden), overrides: cleanOverrides(l.overrides) };
+      const clean = { done: cleanFlags(l.done), extra: cleanList(l.extra), hidden: cleanFlags(l.hidden), overrides: cleanOverrides(l.overrides) };
+      if(logHasActivity(clean)) logs[k] = clean; // empty day entries carry no information
     });
+    // Template history: `template` applies from tplArchive.since onward; each archived version applies
+    // from its id (a date key) until the next version. Old data without it = one template for all dates.
+    const a = isObj(src.tplArchive) ? src.tplArchive : {};
+    const tplArchive = {
+      since: typeof a.since==='string' && DATE_KEY_RE.test(a.since) ? a.since : EPOCH_KEY,
+      versions: Array.isArray(a.versions)
+        ? a.versions.filter(v=>isObj(v) && typeof v.id==='string' && DATE_KEY_RE.test(v.id))
+            .map(v=>({ id: v.id, template: cleanTemplate(v.template) }))
+        : [],
+    };
     const p = isObj(src.prefs) ? src.prefs : {};
     const d = defaultPrefs();
     const num = (v,min,max,def)=> Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def;
@@ -677,7 +692,7 @@
       bgOpacity: num(p.bgOpacity, 30, 95, d.bgOpacity),
       bgBlur: num(p.bgBlur, 0, 10, d.bgBlur),
     };
-    return {template, logs, prefs};
+    return {template, logs, prefs, tplArchive};
   }
 
   // ---------- sync: three-way merge ----------
@@ -729,11 +744,13 @@
       .finally(()=> clearTimeout(t));
   }
   const clone = o => JSON.parse(JSON.stringify(o));
-  function snapshot(){ return clone({template, logs, prefs}); }
+  function currentBundle(){ return {template, logs, prefs, tplArchive}; }
+  function snapshot(){ return clone(currentBundle()); }
+  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; }
 
   // Replaces in-memory state (e.g. with changes pulled from another device) and refreshes the visible view.
   function adoptState(s){
-    template = s.template; logs = s.logs; prefs = s.prefs;
+    setState(s);
     localCacheSave(s);
     applyPrefs();
     if(!$('mainView').classList.contains('hidden')) render();
@@ -789,7 +806,7 @@
   function saveBundle(){
     changeSeq++;
     setPending(true);
-    localCacheSave({template, logs, prefs});
+    localCacheSave(currentBundle());
     syncState = 'syncing';
     updateSyncBadge();
     clearTimeout(saveTimer);
@@ -813,6 +830,26 @@
   let template = defaultTemplate();
   let logs = {};
   let prefs = defaultPrefs();
+  let tplArchive = { since: EPOCH_KEY, versions: [] };
+
+  // The template in effect on a given date. Editing the template only changes today and later;
+  // past days keep the version that was active back then (see beginTemplateEdit).
+  function templateFor(key){
+    if(key >= tplArchive.since) return template;
+    const versions = tplArchive.versions.filter(v=>v.id < tplArchive.since).sort((a,b)=> a.id < b.id ? -1 : 1);
+    if(!versions.length) return template;
+    let pick = versions[0];
+    versions.forEach(v=>{ if(v.id <= key) pick = v; });
+    return pick.template;
+  }
+  // Call before every change to the template: on the first edit of a day, archive the version
+  // that applied until yesterday so history and reports stay as they were.
+  function beginTemplateEdit(){
+    const today = dateKey(new Date());
+    if(tplArchive.since >= today) return;
+    const keep = tplArchive.versions.filter(v=>v.id!==tplArchive.since);
+    tplArchive = { since: today, versions: [...keep, { id: tplArchive.since, template: clone(template) }] };
+  }
 
   function applyPrefs(){
     document.documentElement.setAttribute('data-theme', prefs.theme);
@@ -854,12 +891,25 @@
     if(!logs[key].overrides) logs[key].overrides = {};
     return logs[key];
   }
+  // Read-only access for rendering: never creates entries (only real edits should add to the data).
+  function readLog(key){ return logs[key] || {done:{}, extra:[], hidden:{}, overrides:{}}; }
+
+  function parseKey(k){ const [y,m,d] = k.split('-').map(Number); return new Date(y, m-1, d); } // local midnight
+
+  // First day the app was actually used (earliest day with any recorded activity), capped at today.
+  // Stats and reports ignore earlier days instead of counting them as failures.
+  function firstActiveKey(){
+    const today = dateKey(new Date());
+    let first = today;
+    Object.keys(logs).forEach(k=>{ if(k < first && logHasActivity(logs[k])) first = k; });
+    return first;
+  }
 
   function tasksForDate(d){
     const code = dayCodeFor(d);
     const key = dateKey(d);
-    const log = ensureLog(key);
-    const base = (template[code]||[])
+    const log = readLog(key);
+    const base = (templateFor(key)[code]||[])
       .filter(t=>!log.hidden[t.id])
       .map(t=>{
         const ov = log.overrides[t.id];
@@ -968,19 +1018,24 @@
 
     // week pct
     const wStart = startOfWeek(selectedDate);
+    const firstDay = parseKey(firstActiveKey());
     let weekTasks = [];
     for(let i=0;i<7;i++){
       const d = new Date(wStart); d.setDate(wStart.getDate()+i);
       if(d > new Date()) continue; // don't count future days in week avg
+      if(d < firstDay) continue;   // nor days before the app was used
       weekTasks = weekTasks.concat(tasksForDate(d));
     }
     $('statWeek').textContent = toArabicNum(pct(weekTasks))+'٪';
 
-    // streak: consecutive days ending today with 100%
+    // streak: consecutive 100% days. Today counts once it's complete; while it's still
+    // in progress the streak is counted up to yesterday instead of dropping to zero.
     let streak = 0;
     let cursor = new Date();
     cursor.setHours(0,0,0,0);
-    while(true){
+    const todayTasks = tasksForDate(cursor);
+    if(!(todayTasks.length>0 && pct(todayTasks)===100)) cursor.setDate(cursor.getDate()-1);
+    while(cursor >= firstDay){
       const dTasks = tasksForDate(cursor);
       if(dTasks.length>0 && pct(dTasks)===100){
         streak++;
@@ -1196,7 +1251,7 @@
     const key = dateKey(selectedDate);
     const code = dayCodeFor(selectedDate);
     const log = ensureLog(key);
-    (template[code]||[]).forEach(t=>{ log.hidden[t.id] = true; delete log.done[t.id]; delete log.overrides[t.id]; });
+    (templateFor(key)[code]||[]).forEach(t=>{ log.hidden[t.id] = true; delete log.done[t.id]; delete log.overrides[t.id]; });
     log.extra = [];
     saveLogs(logs);
     render();
@@ -1232,21 +1287,20 @@
   // ---------- reports ----------
   let reportRange = 'week';
 
-  function allDatesWithLogs(){
-    return Object.keys(logs);
-  }
-
+  // Every range starts no earlier than the first day the app was used (parsed as local midnight,
+  // so today is always included).
   function rangeDates(range){
     const today = new Date(); today.setHours(0,0,0,0);
+    const firstDay = parseKey(firstActiveKey());
     let start;
     if(range==='week'){
       start = startOfWeek(today);
     } else if(range==='month'){
       start = new Date(today.getFullYear(), today.getMonth(), 1);
     } else {
-      const keys = allDatesWithLogs().sort();
-      start = keys.length ? new Date(keys[0]) : new Date(today.getFullYear(), today.getMonth()-3, 1);
+      start = firstDay;
     }
+    if(start < firstDay) start = firstDay;
     const dates = [];
     const cursor = new Date(start);
     while(cursor <= today){
@@ -1372,7 +1426,7 @@
 
       const titleInput = document.createElement('input');
       titleInput.value = t.title;
-      titleInput.addEventListener('input', ()=>{ t.title = titleInput.value; saveTemplate(template); });
+      titleInput.addEventListener('input', ()=>{ beginTemplateEdit(); t.title = titleInput.value; saveTemplate(template); });
       row.appendChild(titleInput);
 
       const timeInput = document.createElement('input');
@@ -1380,7 +1434,7 @@
       timeInput.value = t.time || '';
       timeInput.style.color='var(--text-dim)';
       timeInput.placeholder='الوقت';
-      timeInput.addEventListener('input', ()=>{ t.time = timeInput.value; saveTemplate(template); });
+      timeInput.addEventListener('input', ()=>{ beginTemplateEdit(); t.time = timeInput.value; saveTemplate(template); });
       row.appendChild(timeInput);
 
       const del = document.createElement('button');
@@ -1388,6 +1442,7 @@
       del.style.flex='none';
       del.textContent='✕';
       del.addEventListener('click', ()=>{
+        beginTemplateEdit();
         template[settingsDay] = template[settingsDay].filter(x=>x.id!==t.id);
         saveTemplate(template);
         renderTplTasks();
@@ -1414,6 +1469,7 @@
   $('closeSettings').addEventListener('click', closeSettings);
   $('tplAddTask').addEventListener('click', ()=>{
     const t = {id:nid(), period:null, title:'مهمة جديدة', time:''};
+    beginTemplateEdit();
     if(!template[settingsDay]) template[settingsDay]=[];
     template[settingsDay].push(t);
     saveTemplate(template);
@@ -1460,7 +1516,7 @@
 
   // data management
   $('exportData').addEventListener('click', ()=>{
-    const backup = {template, logs, prefs, exportedAt: new Date().toISOString()};
+    const backup = {...currentBundle(), exportedAt: new Date().toISOString()};
     const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1476,8 +1532,8 @@
     if(!ok) return;
     template = defaultTemplate();
     logs = {};
-    saveTemplate(template);
-    saveLogs(logs);
+    tplArchive = { since: EPOCH_KEY, versions: [] };
+    saveBundle();
     renderTplDays();
     renderTplTasks();
     closeSettings();
@@ -1556,15 +1612,22 @@
         });
       }
       const json = sub.toJSON();
-      if(!sb) return;
-      try{
-        await sb.from('push_subscriptions').insert({
-          endpoint: json.endpoint,
-          p256dh: json.keys.p256dh,
-          auth: json.keys.auth
-        });
-      }catch(e){
-        // endpoint already exists (unique constraint) or network issue — safe to ignore
+      // supabase-js reports failures in the returned `error` (it doesn't throw), so check it explicitly;
+      // only show the "enabled" state once the server actually has this subscription.
+      let saved = false;
+      if(sb){
+        try{
+          const { error } = await withTimeout(sb.from('push_subscriptions').insert({
+            endpoint: json.endpoint,
+            p256dh: json.keys.p256dh,
+            auth: json.keys.auth
+          }), SYNC_TIMEOUT_MS);
+          saved = !error || error.code === '23505'; // 23505 = endpoint already registered
+        }catch(e){ saved = false; }
+      }
+      if(!saved){
+        alert('تعذّر تسجيل الإشعارات على الخادم. تأكد من الاتصال وحاول مرة أخرى.');
+        return;
       }
       $('notifyBtn').textContent = '🔔✓';
       $('notifyBtn').setAttribute('aria-label','الإشعارات مفعّلة');
@@ -1605,7 +1668,7 @@
   // ---------- initial data load (local first, then merge with Supabase) ----------
   const loadingEl = document.getElementById('loadingOverlay');
   const cached = localCacheLoad();
-  if(cached){ template = cached.template; logs = cached.logs; prefs = cached.prefs; }
+  if(cached) setState(cached);
   applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
   if(cached){
     // show local data right away; the sync merges server changes in the background
