@@ -1,3 +1,4 @@
+-- SUPERSEDED by supabase/migrations/20260927000100_baseline.sql (kept for history; do not run on new projects).
 -- Cloud sync for the single shared row public.ayyam_data (id = 'main'). Safe to run again.
 -- The app has no login (owner's choice), so the anon role may read/write that one row only.
 -- RLS was enabled with no policies, which silently blocked every read/write from the app.
