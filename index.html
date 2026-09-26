@@ -812,8 +812,15 @@
         sb.from('ayyam_data').select('data').eq('id', ROW_ID).maybeSingle(), SYNC_TIMEOUT_MS);
       if(error) throw error;
       const remote = data && data.data ? sanitizeBundle(data.data) : null;
-      // No saved base yet (first run of this version): if nothing is pending, the server is the truth.
-      const base = loadBase() || (pending ? {} : sent);
+      // No saved base yet (this device never synced): normally the server is the truth — except when
+      // only this device has real activity (e.g. the server copy is a fresh default), then local wins.
+      let base = loadBase();
+      if(!base){
+        const active = b => Object.values(b.logs).some(logHasActivity);
+        if(pending) base = {};
+        else if(remote && active(sent) && !active(remote)) base = remote; // merge3 → keeps local
+        else base = sent;                                                 // merge3 → takes server
+      }
       const merged = remote ? sanitizeBundle(merge3(base, sent, remote)) : sent;
       if(!remote || !deepEqual(merged, remote)){
         const { error: upErr } = await withTimeout(
