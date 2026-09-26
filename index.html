@@ -1731,9 +1731,17 @@
         alert('الإشعارات غير مدعومة في هذا المتصفح.');
         return;
       }
+      // Once blocked, browsers never show the prompt again — tell the user where to re-enable it.
+      const blockedHelp = 'الإشعارات محظورة لهذا الموقع، والمتصفح لن يعرض طلب الإذن مرة أخرى.\n\n'
+        + 'لتفعيلها:\n'
+        + '• لو فاتح التطبيق من المتصفح: اضغط على رمز القفل أو الإعدادات بجانب عنوان الموقع ← الأذونات ← الإشعارات ← سماح.\n'
+        + '• لو مثبّت التطبيق على الشاشة الرئيسية: اضغط مطولًا على أيقونة التطبيق ← معلومات التطبيق ← الإشعارات ← تفعيل.\n\n'
+        + 'ثم ارجع واضغط 🔔 مرة أخرى.';
+      if(Notification.permission === 'denied'){ alert(blockedHelp); return; }
       const permission = await Notification.requestPermission();
+      if(permission === 'denied'){ alert(blockedHelp); return; }
       if(permission !== 'granted'){
-        alert('لم يتم منح إذن الإشعارات.');
+        alert('لم يتم منح إذن الإشعارات. اضغط 🔔 مرة أخرى واختر «سماح».');
         return;
       }
       const reg = await navigator.serviceWorker.ready;
