@@ -128,6 +128,44 @@
       });
     }
 
+    // ATOMIC coalesced edit: write the new state and REPLACE the outbox with exactly one pending
+    // record (fresh op_id per changeset). Used by the v2 sync engine. Resolves only when durable.
+    async saveEdit(state, opId, meta) {
+      const seq = ++this._seq;
+      const rec = Object.assign(
+        { op_id: opId, seq, created_at: Date.now(), type: 'bundle', reason: 'sync', base_revision: null,
+          retry_count: 0, state: 'pending', last_error: null }, meta || {},
+      );
+      rec.op_id = opId; rec.seq = seq;
+      return txP(this.db.transaction(['kv', 'outbox'], 'readwrite'), (tx) => {
+        tx.objectStore('kv').put({ k: 'state', v: state });
+        const ob = tx.objectStore('outbox');
+        ob.clear();          // coalesce: only the latest changeset is pending
+        ob.put(rec);
+        this._patchMetaIn(tx, { lastSeq: seq, updatedAt: Date.now() });
+        return rec;
+      });
+    }
+
+    async pendingOp() {
+      const box = await this.listOutbox();
+      return box.length ? box[box.length - 1] : null;
+    }
+
+    // Append-only recovery store for state fenced by a newer epoch (a stale device's pre-reset data).
+    async saveRecovery(entry) {
+      try {
+        await txP(this.db.transaction('kv', 'readwrite'), async (tx) => {
+          const kv = tx.objectStore('kv');
+          const cur = (await reqP(kv.get('recovery'))) || { k: 'recovery', v: [] };
+          cur.v.push(Object.assign({ at: Date.now() }, entry));
+          if (cur.v.length > 20) cur.v = cur.v.slice(-20);
+          kv.put(cur);
+        });
+      } catch (_) { /* recovery is best-effort */ }
+    }
+    async getRecovery() { const r = await this._get('kv', 'recovery'); return r ? r.v : []; }
+
     // Save state locally WITHOUT enqueuing (e.g. adopting a server-merged result). Atomic.
     async saveState(state) {
       return txP(this.db.transaction('kv', 'readwrite'), (tx) => {

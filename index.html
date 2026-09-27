@@ -17,6 +17,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="js/storage.js"></script>
+<script src="js/sync-model.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
 <style>
   :root{
@@ -445,6 +446,14 @@
     </div>
 
     <div class="report-card" style="margin-top:14px;">
+      <h3>المزامنة بين الأجهزة</h3>
+      <p class="report-hint" style="margin-top:0;" id="syncKeyInfo"></p>
+      <div class="sheet-actions" style="margin-top:0;">
+        <button class="btn ghost" id="enterKeyBtn">إدخال / تغيير مفتاح المزامنة</button>
+      </div>
+    </div>
+
+    <div class="report-card" style="margin-top:14px;">
       <h3>إدارة البيانات</h3>
       <div class="sheet-actions" style="margin-top:0;">
         <button class="btn ghost" id="exportData">تصدير نسخة احتياطية</button>
@@ -550,15 +559,19 @@
     td('isha','جلسة مع الصحبة','العشاء – الفجر'),
   ];
 
+  // STABLE ids for the default schedule (same on every device): so two fresh devices that both seed
+  // the defaults converge to the SAME task set instead of duplicating it, and the enriched model
+  // never mistakes a reload for a delete+re-add.
   function defaultTemplate(){
+    const withStableIds = (day, arr) => arr.map((t,i)=>({...t, id:'def-'+day+'-'+i}));
     return {
-      sat: commonDayGym().map(t=>({...t,id:nid()})),
-      sun: commonDayGym().map(t=>({...t,id:nid()})),
-      mon: fastingDayIftar().map(t=>({...t,id:nid()})),
-      tue: commonDayGym().map(t=>({...t,id:nid()})),
-      wed: commonDayGym().map(t=>({...t,id:nid()})),
-      thu: fastingDayIftar().map(t=>({...t,id:nid()})),
-      fri: FRIDAY.map(t=>({...t,id:nid()})),
+      sat: withStableIds('sat', commonDayGym()),
+      sun: withStableIds('sun', commonDayGym()),
+      mon: withStableIds('mon', fastingDayIftar()),
+      tue: withStableIds('tue', commonDayGym()),
+      wed: withStableIds('wed', commonDayGym()),
+      thu: withStableIds('thu', fastingDayIftar()),
+      fri: withStableIds('fri', FRIDAY),
     };
   }
 
@@ -590,11 +603,13 @@
       saved:  {text:'☁️ تمت المزامنة', show:true},
       error:  {text:'⚠️ تعذّرت المزامنة — محفوظ على الجهاز', show:true},
       offline:{text:'📴 غير متصل — محفوظ على الجهاز، سيُرفع لاحقًا', show:true},
+      'need-key':{text:'🔑 أدخل مفتاح المزامنة', show:true},
     };
     // A failed local save takes precedence: never show "saved" when the device could not store it.
     const s = storageError
       ? {text:'⚠️ تعذّر الحفظ على الجهاز — التغيير في الذاكرة فقط', show:true}
       : (map[syncState] || map.idle);
+    el.style.cursor = (syncState==='need-key') ? 'pointer' : '';
     el.textContent = s.text;
     el.classList.toggle('hidden', !s.show);
     if(syncState==='saved'){
@@ -604,50 +619,53 @@
   }
 
   // ---------- durable local storage (IndexedDB primary, localStorage as fallback mirror) ----------
-  // The IndexedDB store is the local source of truth. localStorage keeps a best-effort mirror so an
-  // old cache is still readable and so the app still works if IndexedDB is blocked (private mode).
-  // Rule: a save is only reported successful once the durable write actually completes.
-  const PENDING_OP = 'pending-bundle'; // single outbox record = "local has changes not yet on the server"
+  // The stored/synced unit is the "enriched" value (LWW registers + tombstones + epoch) from
+  // AyyamModel. The app renders the materialized bundle produced from it. localStorage keeps a
+  // best-effort mirror so the app still works if IndexedDB is blocked (private mode).
+  const M = (typeof AyyamModel !== 'undefined') ? AyyamModel : null;
+  const LS_ENRICHED = 'ayyam_enriched_v2';
+  const LS_BASE_V2  = 'ayyam_base_v2';
+  const LS_DEVICE_ID = 'ayyam_device_id_v1';
   let store = null;            // AyyamStore instance, or null in degraded (localStorage-only) mode
   let storageDegraded = false; // true once we know IndexedDB is unusable
-  let syncBase = null;         // last confirmed server bundle, kept in memory for the sync engine
+  let enriched = M ? M.empty(0) : null;   // current enriched state
+  let baseEnriched = M ? M.empty(0) : null; // last server-confirmed enriched
+  let baseRevision = null;     // server revision of baseEnriched (null = not yet known)
   let pendingMem = false;      // "there are unsynced local changes"
 
-  function lsMirror(bundle){ // best-effort, never throws
-    try{ localStorage.setItem(LS_CACHE, JSON.stringify(bundle)); }catch(e){}
+  function newId(){ return (self.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(36).slice(2); }
+  function deviceId(){
+    let id;
+    try{ id = localStorage.getItem(LS_DEVICE_ID); }catch(e){}
+    if(!id){ id = newId(); try{ localStorage.setItem(LS_DEVICE_ID, id); }catch(e){} }
+    return id;
   }
-  function lsReadBundle(){
-    try{ const raw = localStorage.getItem(LS_CACHE); if(raw) return sanitizeBundle(JSON.parse(raw)); }catch(e){}
-    try{
-      const t = localStorage.getItem(LS_TPL), l = localStorage.getItem(LS_LOG), p = localStorage.getItem(LS_PREFS);
-      if(t || l || p) return sanitizeBundle({ template: t?JSON.parse(t):defaultTemplate(), logs: l?JSON.parse(l):{}, prefs: p?JSON.parse(p):defaultPrefs() });
-    }catch(e){}
-    return null;
-  }
+  const DEVICE_ID = deviceId();
 
-  // Persist a user edit: state + a single pending marker, atomically. Throws if it cannot be made
-  // durable (so the caller shows a warning and never claims "saved"). Keeps a localStorage mirror.
-  async function persistLocalEdit(bundle){
+  function isEnriched(v){ return isObj(v) && v.v===2 && isObj(v.reg); }
+  function lsMirrorEnriched(en){ try{ localStorage.setItem(LS_ENRICHED, JSON.stringify(en)); }catch(e){} }
+
+  // Persist a user edit atomically (state + one pending op with a fresh op_id). Throws if not durable.
+  async function persistEnrichedEdit(en){
+    const opId = (self.crypto&&crypto.randomUUID)?crypto.randomUUID():'op'+Date.now()+Math.random();
     if(store){
-      await store.saveStateAndEnqueue(bundle, { op_id: PENDING_OP, reason: 'sync', base_revision: null });
-      lsMirror(bundle);
-      return;
+      await store.saveEdit(en, opId, { reason:'sync', base_revision: baseRevision });
+      lsMirrorEnriched(en);
+      return opId;
     }
-    // degraded: localStorage only. If that throws (quota/blocked) the edit is NOT durable → surface it.
-    localStorage.setItem(LS_CACHE, JSON.stringify(bundle));
+    localStorage.setItem(LS_ENRICHED, JSON.stringify(en)); // degraded: throws surface as "not saved"
     try{ localStorage.setItem(LS_PENDING, '1'); }catch(e){}
+    return opId;
   }
-  // Persist state adopted from the server (no new pending marker). Best-effort mirror; store is primary.
-  async function persistState(bundle){
-    if(store){ await store.saveState(bundle); lsMirror(bundle); return; }
-    lsMirror(bundle);
+  async function persistEnrichedState(en){ // adopt server-merged result (no new pending op)
+    if(store){ await store.saveState(en); lsMirrorEnriched(en); return; }
+    lsMirrorEnriched(en);
   }
-  async function persistBase(base){
-    syncBase = base; // pure bundle (merge3 base)
-    if(store){ try{ await store.putBase({ data: base, revision: null, epoch: null }); }catch(e){} }
-    try{ localStorage.setItem(LS_BASE, JSON.stringify(base)); }catch(e){}
+  async function persistBaseV2(en, revision){
+    baseEnriched = en; baseRevision = revision;
+    if(store){ try{ await store.putBase({ data: en, revision, epoch: en.epoch }); }catch(e){} }
+    try{ localStorage.setItem(LS_BASE_V2, JSON.stringify({ data: en, revision })); }catch(e){}
   }
-  function loadBaseSync(){ return syncBase; }
 
   function isPending(){ return pendingMem; }
   function setPending(on){
@@ -655,34 +673,58 @@
     if(on){ try{ localStorage.setItem(LS_PENDING,'1'); }catch(e){} }
     else { try{ localStorage.removeItem(LS_PENDING); }catch(e){} }
   }
-  // Clear the durable pending marker and record the confirmed base once the server has our changes.
-  async function clearPending(base, state){
+  async function clearPending(en, revision){
     setPending(false);
-    if(store){ try{ await store.confirmOutbox(PENDING_OP, base, state); }catch(e){} }
+    await persistBaseV2(en, revision);
+    if(store){ try{ const op = await store.pendingOp(); if(op) await store.confirmOutbox(op.op_id); }catch(e){} }
   }
 
-  // Open IndexedDB, migrate once from localStorage (non-destructive), and load state + base.
-  // Returns { state, degraded }. On any IndexedDB failure we fall back to localStorage and warn.
+  // Load a materialized-or-enriched local value and a base, upgrading v1/Phase-2 shapes to enriched.
+  // Pending local changes are preserved: they are diffed against the base and stamped as newest.
+  function buildEnrichedFrom(stateRaw, baseRaw){
+    const nowT = Date.now();
+    if(isEnriched(stateRaw)){
+      const b = isEnriched(baseRaw && baseRaw.data) ? baseRaw.data : (baseRaw && baseRaw.data ? M.toEnriched(sanitizeBundle(baseRaw.data),1) : M.empty(stateRaw.epoch));
+      return { en: stateRaw, base: b, rev: baseRaw ? (baseRaw.revision ?? null) : null };
+    }
+    // v1 / Phase-2 materialized state → enrich, stamping only the pending diff (vs base) as new
+    const baseMat = baseRaw && baseRaw.data ? sanitizeBundle(baseRaw.data) : null;
+    const baseEn = baseMat ? M.toEnriched(baseMat, 1) : M.empty(0);
+    const localMat = stateRaw ? sanitizeBundle(stateRaw) : null;
+    const en = localMat ? M.enrich(baseEn, localMat, nowT, DEVICE_ID) : (baseMat ? baseEn : null);
+    return { en, base: baseEn, rev: baseRaw ? (baseRaw.revision ?? null) : null };
+  }
+
+  // Open IndexedDB, migrate once from localStorage (non-destructive), load + upgrade to enriched.
   async function initStorage(){
     try{
-      if(!(typeof AyyamStore !== 'undefined' && AyyamStore.available())) throw new Error('no idb');
+      if(!(typeof AyyamStore !== 'undefined' && AyyamStore.available() && M)) throw new Error('no idb/model');
       store = await AyyamStore.open();
-      const mig = await store.migrateFromLocalStorage(k=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } }, sanitizeBundle);
-      let state = await store.getState();
-      const base = await store.getBase();
-      if(base && base.data){ syncBase = sanitizeBundle(base.data); } // pure bundle for merge3
+      await store.migrateFromLocalStorage(k=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } }, sanitizeBundle);
+      const stateRaw = await store.getState();
+      const baseRaw = await store.getBase();
+      const built = buildEnrichedFrom(stateRaw, baseRaw);
       pendingMem = (await store.outboxCount()) > 0;
-      if(mig.migrated && mig.hadPending) pendingMem = true;
-      if(state) state = sanitizeBundle(state);
-      store.logDiag({ type:'startup', migrated: mig.migrated, pending: pendingMem });
-      return { state, degraded:false };
+      if(built.en){
+        enriched = built.en; baseEnriched = built.base; baseRevision = built.rev;
+        if(!isEnriched(stateRaw)) await persistEnrichedState(enriched); // store upgraded shape once
+        store.logDiag({ type:'startup', pending: pendingMem, epoch: enriched.epoch });
+        return { state: M.materialize(enriched), degraded:false };
+      }
+      store.logDiag({ type:'startup-empty' });
+      return { state:null, degraded:false };
     }catch(e){
-      // IndexedDB unavailable (private mode / blocked / quota). Keep working from localStorage.
+      // IndexedDB unavailable → localStorage-only mode.
       store = null; storageDegraded = true;
-      const state = lsReadBundle();
+      let sRaw=null, bRaw=null;
+      try{ const raw = localStorage.getItem(LS_ENRICHED); if(raw) sRaw = JSON.parse(raw); }catch(_){}
+      if(!sRaw){ try{ const raw = localStorage.getItem(LS_CACHE); if(raw) sRaw = JSON.parse(raw); }catch(_){} } // Phase-2/v1 cache
+      try{ const raw = localStorage.getItem(LS_BASE_V2); if(raw) bRaw = JSON.parse(raw); }catch(_){}
+      if(!bRaw){ try{ const raw = localStorage.getItem(LS_BASE); if(raw) bRaw = { data: JSON.parse(raw), revision:null }; }catch(_){} }
       try{ if(localStorage.getItem(LS_PENDING)==='1') pendingMem = true; }catch(_){}
-      try{ const raw = localStorage.getItem(LS_BASE); if(raw) syncBase = sanitizeBundle(JSON.parse(raw)); }catch(_){}
-      return { state, degraded:true };
+      const built = M ? buildEnrichedFrom(sRaw, bRaw) : { en:null };
+      if(built.en){ enriched = built.en; baseEnriched = built.base; baseRevision = built.rev; return { state: M.materialize(enriched), degraded:true }; }
+      return { state:null, degraded:true };
     }
   }
 
@@ -769,48 +811,8 @@
     return {template, logs, prefs, tplArchive};
   }
 
-  // ---------- sync: three-way merge ----------
-  // base = what the server had at our last successful sync, mine = this device, theirs = server now.
-  // Whatever only one side changed is kept; only a true conflict on the same value goes to this device.
-  // Result: offline edits and edits made on another device are both preserved instead of overwritten.
-  function deepEqual(a, b){
-    if(a===b) return true;
-    if(!a || !b || typeof a!=='object' || typeof b!=='object') return false;
-    if(Array.isArray(a)!==Array.isArray(b)) return false;
-    if(Array.isArray(a)) return a.length===b.length && a.every((x,i)=>deepEqual(x, b[i]));
-    const ka = Object.keys(a).filter(k=>a[k]!==undefined);
-    const kb = Object.keys(b).filter(k=>b[k]!==undefined);
-    return ka.length===kb.length && ka.every(k=>deepEqual(a[k], b[k]));
-  }
-  const isIdList = v => Array.isArray(v) && v.every(x=>isObj(x) && typeof x.id==='string');
-
-  function merge3(base, mine, theirs){
-    if(deepEqual(mine, theirs)) return mine;
-    if(deepEqual(mine, base)) return theirs;
-    if(deepEqual(theirs, base)) return mine;
-    if(isObj(mine) && isObj(theirs)){
-      const b = isObj(base) ? base : {};
-      const out = {};
-      new Set([...Object.keys(mine), ...Object.keys(theirs)]).forEach(k=>{
-        const v = merge3(b[k], mine[k], theirs[k]);
-        if(v!==undefined) out[k] = v;
-      });
-      return out;
-    }
-    if(isIdList(mine) && isIdList(theirs)){
-      // task lists: merge item-by-item by id (keeps tasks added on either side)
-      const byId = arr => new Map(arr.map(x=>[x.id, x]));
-      const bm = byId(isIdList(base) ? base : []), mm = byId(mine), tm = byId(theirs);
-      const ids = [...mm.keys(), ...[...tm.keys()].filter(id=>!mm.has(id))];
-      const out = [];
-      ids.forEach(id=>{
-        const v = merge3(bm.get(id), mm.get(id), tm.get(id));
-        if(v!==undefined) out.push(v);
-      });
-      return out;
-    }
-    return mine;
-  }
+  // The v2 conflict engine lives in js/sync-model.js (LWW registers + tombstones + epoch). The old
+  // v1 three-way object merge was removed here when the CAS engine replaced it.
 
   function withTimeout(p, ms){
     let t;
@@ -819,81 +821,119 @@
   }
   const clone = o => JSON.parse(JSON.stringify(o));
   function currentBundle(){ return {template, logs, prefs, tplArchive}; }
-  function snapshot(){ return clone(currentBundle()); }
   function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; }
 
-  // Replaces in-memory state (e.g. with changes pulled from another device) and refreshes the visible view.
-  async function adoptState(s){
-    setState(s);
-    await persistState(s);
+  // Applies a merged/adopted enriched value to the visible state and refreshes the view.
+  async function adoptEnriched(en, persist){
+    enriched = en;
+    setState(M.materialize(en));
+    if(persist) await persistEnrichedState(en);
     applyPrefs();
     if(!$('mainView').classList.contains('hidden')) render();
     if(!$('settingsView').classList.contains('hidden')){ renderTplDays(); renderTplTasks(); }
     if(!$('reportsView').classList.contains('hidden')) renderReports();
   }
 
+  // ---------- device key (per device, entered once; never shown/logged/committed) ----------
+  const LS_DEVICE_KEY = 'ayyam_device_key_v1';
+  function getDeviceKey(){ try{ return localStorage.getItem(LS_DEVICE_KEY) || ''; }catch(e){ return ''; } }
+  function setDeviceKey(k){ try{ k ? localStorage.setItem(LS_DEVICE_KEY, k) : localStorage.removeItem(LS_DEVICE_KEY); }catch(e){} }
+  let needsKey = false; // true when the server rejected our key (or none set) and we have changes to sync
+  // Entered once per device, kept only in this device's localStorage. Never shown elsewhere or logged.
+  function promptForKey(){
+    const k = window.prompt('مفتاح المزامنة (يُدخل مرة واحدة على هذا الجهاز لحماية بياناتك):', '');
+    if(k === null) return;
+    const key = k.trim();
+    if(key.length < 16){ alert('المفتاح قصير جدًا. انسخه كما هو من جهازك الآخر.'); return; }
+    setDeviceKey(key);
+    needsKey = false;
+    syncNow();
+  }
+
+  async function rpc(fn, args){
+    if(!sb) throw new Error('supabase unavailable');
+    const { data, error } = await withTimeout(sb.rpc(fn, args), SYNC_TIMEOUT_MS);
+    if(error) throw error;
+    return data;
+  }
+
+  const MAX_ATTEMPTS = 6;
+  const backoff = a => Math.min(1000 * Math.pow(2, a), 15000) + Math.floor(Math.random()*400);
+  const sleep = ms => new Promise(r=>setTimeout(r, ms));
   let syncing = false, syncQueued = false, changeSeq = 0;
 
-  // Pulls the server copy, merges it with local state, and pushes the result if anything changed.
-  async function syncNow(){
+  // v2 sync: pull → merge (LWW + tombstones + epoch) → compare-and-swap commit, retrying on conflict
+  // with backoff and re-merge; never a forced overwrite. Idempotent by the pending op's op_id.
+  async function syncNow(reason){
     clearTimeout(saveTimer); saveTimer = null;
     if(syncing){ syncQueued = true; return; }
     syncing = true;
     const seqAtStart = changeSeq;
-    const pending = isPending();
-    const sent = snapshot();
-    if(pending){ syncState = 'syncing'; updateSyncBadge(); }
+    const key = getDeviceKey();
+    const hadPending = isPending();
+    if(hadPending){ syncState = 'syncing'; updateSyncBadge(); }
     try{
-      if(!sb) throw new Error('supabase unavailable');
-      const { data, error } = await withTimeout(
-        sb.from('ayyam_data').select('data').eq('id', ROW_ID).maybeSingle(), SYNC_TIMEOUT_MS);
-      if(error) throw error;
-      const remote = data && data.data ? sanitizeBundle(data.data) : null;
-      // No saved base yet (this device never synced): normally the server is the truth — except when
-      // only this device has real activity (e.g. the server copy is a fresh default), then local wins.
-      let base = loadBaseSync();
-      if(!base){
-        const active = b => Object.values(b.logs).some(logHasActivity);
-        if(pending) base = {};
-        else if(remote && active(sent) && !active(remote)) base = remote; // merge3 → keeps local
-        else base = sent;                                                 // merge3 → takes server
+      if(!M) throw new Error('model unavailable');
+      if(!key){ if(hadPending){ needsKey = true; syncState = 'need-key'; } return; }
+      const op = store ? await store.pendingOp() : null;
+      const opId = op ? op.op_id : newId();
+
+      for(let attempt=0; attempt<MAX_ATTEMPTS; attempt++){
+        const pull = await rpc('ayyam_pull', { p_key: key });
+        if(pull.status === 'unauthorized'){ needsKey = true; syncState = 'need-key'; setDeviceKey(''); return; }
+        needsKey = false;
+        const serverEn = pull.exists ? M.toEnriched(pull.data, 1) : M.empty(0);
+        const serverRev = pull.exists ? pull.revision : 0;
+
+        const res = M.merge(baseEnriched || M.empty(0), enriched, serverEn);
+        if(res.parked && store) await store.saveRecovery({ reason:'epoch-fence', epoch: res.parked.epoch, data: M.materialize(res.parked) });
+        let merged = M.pruneTombstones(res.merged, Date.now());
+
+        // Nothing new to push? adopt server view and finish.
+        if(pull.exists && JSON.stringify(merged) === JSON.stringify(serverEn)){
+          await adoptEnrichedIfChanged(merged);
+          await persistBaseV2(merged, serverRev);
+          if(changeSeq===seqAtStart){ await clearPending(merged, serverRev); if(hadPending) syncState='saved'; }
+          return;
+        }
+        const commit = await rpc('ayyam_commit', { p_key:key, p_expected_revision: serverRev, p_data: merged, p_op_id: opId, p_reason: reason || 'sync' });
+        if(commit.status === 'unauthorized'){ needsKey = true; syncState='need-key'; setDeviceKey(''); return; }
+        if(commit.status === 'conflict'){ await sleep(backoff(attempt)); continue; } // someone wrote first → re-pull/re-merge
+        if(commit.status === 'invalid' || commit.status === 'too_large'){ syncState='error'; if(store) store.logDiag({type:'commit-rejected', status:commit.status}); return; }
+        // ok or duplicate (duplicate = our earlier write already applied; safe)
+        await adoptEnrichedIfChanged(merged);
+        await persistBaseV2(merged, commit.revision);
+        if(changeSeq===seqAtStart){ await clearPending(merged, commit.revision); if(hadPending) syncState='saved'; }
+        else { setPending(true); } // edits arrived during sync → keep pending; will re-run below
+        return;
       }
-      const merged = remote ? sanitizeBundle(merge3(base, sent, remote)) : sent;
-      if(!remote || !deepEqual(merged, remote)){
-        const { error: upErr } = await withTimeout(
-          sb.from('ayyam_data').upsert({ id: ROW_ID, data: merged, updated_at: new Date().toISOString() }),
-          SYNC_TIMEOUT_MS);
-        if(upErr) throw upErr;
-      }
-      await persistBase(merged);
-      // Edits made while this sync was in flight are re-applied on top of the merged result.
-      const current = snapshot();
-      const next = changeSeq===seqAtStart ? merged : sanitizeBundle(merge3(sent, current, merged));
-      if(!deepEqual(next, current)) await adoptState(next);
-      if(changeSeq===seqAtStart){
-        await clearPending(merged, next);   // durably clear the outbox now the server has our changes
-        if(pending) syncState = 'saved';
-      }
+      syncState = 'error'; // exhausted retries
     }catch(e){
       if(isPending()) syncState = navigator.onLine===false ? 'offline' : 'error';
+      if(store) store.logDiag({ type:'sync-error', message: String(e && e.name || 'err') });
     }finally{
       syncing = false;
       updateSyncBadge();
-      if(syncQueued){ syncQueued = false; syncNow(); }
+      if(syncQueued || changeSeq!==seqAtStart){ syncQueued = false; setTimeout(()=>syncNow(), 50); }
     }
   }
+  async function adoptEnrichedIfChanged(en){
+    if(JSON.stringify(en) !== JSON.stringify(enriched)) await adoptEnriched(en, true);
+  }
 
-  // Saves locally first (durably, survives reloads/offline), then syncs to Supabase shortly after.
-  // If the durable local write fails we still try the cloud (so the change is not lost) but keep a
-  // clear warning up — we never claim the change was saved when it was not.
+  // Saves an edit durably (state + one pending op), then schedules a sync. Never claims saved on failure.
+  // reason 'reset'/'import' start a new epoch generation (fences older devices).
   let storageError = false, storageWarned = false;
-  async function saveBundle(){
+  async function saveBundle(reason){
     changeSeq++;
+    const now = Date.now();
+    if(reason === 'reset' || reason === 'import') enriched = M.bumpEpoch(enriched, currentBundle(), now, DEVICE_ID);
+    else enriched = M.enrich(enriched, currentBundle(), now, DEVICE_ID);
     setPending(true);
     syncState = 'syncing';
     updateSyncBadge();
     try{
-      await persistLocalEdit(currentBundle());
+      await persistEnrichedEdit(enriched);
       storageError = false;
     }catch(e){
       storageError = true;
@@ -905,15 +945,17 @@
     }
     updateSyncBadge();
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(syncNow, 600);
+    saveTimer = setTimeout(()=>syncNow(reason==='reset'?'reset':reason==='import'?'import':'sync'), 600);
   }
 
-  window.addEventListener('online', ()=>{ if(isPending()) syncNow(); });
+  // Reconnecting or refocusing always syncs — to PUSH our changes and to PULL other devices' changes,
+  // even when this device has nothing pending.
+  window.addEventListener('online', ()=> syncNow());
   document.addEventListener('visibilitychange', ()=>{
     if(document.visibilityState==='hidden'){
-      if(saveTimer) syncNow();   // flush a pending edit before the app is backgrounded/closed
+      if(saveTimer) syncNow();   // flush a pending edit before backgrounding
     } else {
-      syncNow();                 // coming back: pick up changes made on other devices
+      syncNow();                 // refocus: pull others' changes
     }
   });
 
@@ -1410,6 +1452,13 @@
     renderTplDays();
     renderTplTasks();
     applyPrefs();
+    updateSyncKeyInfo();
+  }
+  function updateSyncKeyInfo(){
+    const el = $('syncKeyInfo'); if(!el) return;
+    el.textContent = getDeviceKey()
+      ? 'هذا الجهاز مرتبط بمفتاح المزامنة. بياناتك تتزامن بأمان بين أجهزتك.'
+      : 'لم يُدخل مفتاح المزامنة على هذا الجهاز بعد. أدخله ليتزامن مع أجهزتك الأخرى.';
   }
   function closeSettings(){
     $('settingsView').classList.add('hidden');
@@ -1607,6 +1656,7 @@
   }
 
   // ---------- wiring ----------
+  $('syncBadge').addEventListener('click', ()=>{ if(syncState==='need-key') promptForKey(); });
   $('prevDay').addEventListener('click', ()=>{ selectedDate = new Date(selectedDate); selectedDate.setDate(selectedDate.getDate()-1); render(); });
   $('nextDay').addEventListener('click', ()=>{ selectedDate = new Date(selectedDate); selectedDate.setDate(selectedDate.getDate()+1); render(); });
 
@@ -1617,6 +1667,7 @@
 
   $('clearDayBtn').addEventListener('click', clearWholeDay);
   $('restoreDayBtn').addEventListener('click', restoreDayToTemplate);
+  $('enterKeyBtn').addEventListener('click', ()=>{ promptForKey(); updateSyncKeyInfo(); });
 
   $('openSettings').addEventListener('click', openSettings);
   $('closeSettings').addEventListener('click', closeSettings);
@@ -1742,7 +1793,7 @@
     const whenTxt = when && !isNaN(when) ? ' (بتاريخ ' + when.toLocaleDateString('ar-EG') + ')' : '';
     if(!confirm(`استرجاع النسخة الاحتياطية${whenTxt}؟\nتحتوي على سجل ${toArabicNum(days)} يوم.\nسيتم استبدال بياناتك الحالية بالكامل.`)) return;
     setState(restored);
-    saveBundle();
+    saveBundle('import'); // new generation: fences older devices from re-adding replaced data
     applyPrefs();
     renderTplDays();
     renderTplTasks();
@@ -1754,7 +1805,7 @@
     template = defaultTemplate();
     logs = {};
     tplArchive = { since: EPOCH_KEY, versions: [] };
-    saveBundle();
+    saveBundle('reset'); // new generation: a stale offline device can't bring the old data back
     renderTplDays();
     renderTplTasks();
     closeSettings();
@@ -1887,23 +1938,47 @@
 
   // ---------- initial data load (durable local first, then merge with Supabase) ----------
   const loadingEl = document.getElementById('loadingOverlay');
-  const init = await initStorage();          // open IndexedDB, migrate from localStorage once
-  const cached = init.state;
-  if(cached) setState(cached);
+  function enrichedIsEmpty(){ return !enriched || Object.keys(enriched.reg).length===0; }
+  // Seed the default schedule on a truly fresh start. Stamped at a BASELINE time so a real edit made
+  // on any device always wins, and with STABLE ids so two devices seeding converge (no duplicate schedule).
+  async function seedDefault(){
+    const fresh = { template: defaultTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: EPOCH_KEY, versions: [] } };
+    enriched = M.toEnriched(fresh, 1);
+    setState(M.materialize(enriched));
+    setPending(true);
+    try{ await persistEnrichedEdit(enriched); }catch(e){}
+    clearTimeout(saveTimer); saveTimer = setTimeout(()=>syncNow('init'), 300);
+  }
+
+  const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
+  if(init.state) setState(init.state);
   applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
-  if(cached){
-    // show local data right away; the sync merges server changes in the background
+  if(init.state && !enrichedIsEmpty()){
+    // existing device: show local data right away; sync merges server changes in the background
     if(loadingEl) loadingEl.classList.add('hidden');
     render();
     syncNow();
-  } else {
-    // new device: wait for the server copy (bounded by SYNC_TIMEOUT_MS), then fall back to defaults
+  } else if(getDeviceKey()){
+    // new device WITH a key: pull the cloud copy; only if the cloud is also empty do we seed defaults
     await syncNow();
+    if(enrichedIsEmpty()) await seedDefault();
     if(loadingEl) loadingEl.classList.add('hidden');
     applyPrefs();
     render();
+  } else {
+    // brand-new device, no key yet: seed the schedule locally so it's usable; it syncs once the key is entered
+    if(enrichedIsEmpty()) await seedDefault();
+    if(loadingEl) loadingEl.classList.add('hidden');
+    applyPrefs();
+    render();
+    needsKey = true; syncState = 'need-key';
   }
   updateSyncBadge();
+  // First launch of the v2 client on an existing device: offer the key entry once so sync can start.
+  if(syncState === 'need-key' && !sessionStorage.getItem('ayyam_key_prompted')){
+    try{ sessionStorage.setItem('ayyam_key_prompted','1'); }catch(e){}
+    setTimeout(promptForKey, 400);
+  }
   autoRefreshLocation();
 })();
 </script>

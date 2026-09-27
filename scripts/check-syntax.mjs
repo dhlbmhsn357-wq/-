@@ -19,6 +19,7 @@ if (!inline.length) { console.error('FAIL index.html: no inline <script> found')
 // the app script is an async IIFE with top-level awaits inside the function body — valid as a script
 inline.forEach((code, i) => check(`index.html <script #${i + 1}>`, code));
 check('sw.js', readFileSync('sw.js', 'utf8'));
+for (const f of ['js/storage.js','js/sync-model.js']) check(f, readFileSync(f, 'utf8'));
 JSON.parse(readFileSync('manifest.webmanifest', 'utf8')); console.log('ok   manifest.webmanifest');
 
 process.exit(failed ? 1 : 0);
