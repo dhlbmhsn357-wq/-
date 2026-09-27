@@ -36,6 +36,9 @@ runtest 'com.ayyam.app.WidgetRenderTest'
 echo "### 0c) Back handling + deep-link cold-start (Phase E)"
 runtest 'com.ayyam.app.BackAndDeepLinkTest'
 
+echo "### 0d) F1: Web Push capability probe inside the WebView"
+runtest 'com.ayyam.app.WebPushProbeTest'
+
 echo "### 1) fresh write (local-asset load + IDB + Keystore + widget snapshot)"
 runtest 'com.ayyam.app.ShellPersistenceTest#writeMarker'
 runtest 'com.ayyam.app.SecureStoreTest#writeKey'
