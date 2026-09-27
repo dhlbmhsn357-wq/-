@@ -36,7 +36,7 @@ test('delete on one device is not revived by a stale device (tombstone wins)', a
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
   await addTask(page, 'هدف مشترك');
-  await waitSynced(page);
+  await expectServerContains(request, 'هدف مشترك');          // A's task is on the server before B opens
 
   const B = await openDevice(browser);                       // B pulls the shared task
   await expect(B.page.locator('.task-title', { hasText: 'هدف مشترك' })).toBeVisible();
@@ -63,7 +63,7 @@ test('done on one device, undone on another: the later action wins deterministic
   const check = taskRow(page, 'مهمة الإكمال').locator('.check');
   await check.click();                                       // A marks done
   await expect(check).toHaveClass(/checked/);
-  await waitSynced(page);
+  await waitServer(request, (db) => JSON.stringify(db.main && db.main.data || {}).includes('مهمة الإكمال') && serverDoneVals(db).includes(true));
 
   const B = await openDevice(browser);
   await expect(taskRow(B.page, 'مهمة الإكمال').locator('.check')).toHaveClass(/checked/); // B sees done
