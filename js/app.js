@@ -83,7 +83,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.1.0'; // bump per release; kept in step with sw.js SW_VERSION
+  const APP_VERSION = '5.1.1'; // bump per release; kept in step with sw.js SW_VERSION
 
   const LS_TPL = 'ayyam_template_v1';
   const LS_LOG = 'ayyam_logs_v1';
