@@ -63,6 +63,19 @@ export async function expectServerContains(request, needle, timeout = 12000) {
   throw new Error(`server never contained "${needle}" within ${timeout}ms; last had it: ${last.includes(needle)}`);
 }
 
+// Poll the server DB until predicate(db) is truthy (authoritative — avoids racing the async client outbox).
+export async function waitServer(request, predicate, timeout = 12000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const db = await (await request.get('/__ctl/db')).json();
+    try { if (predicate(db)) return db; } catch (e) { /* keep polling */ }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  throw new Error('waitServer: predicate not met in time');
+}
+const doneRegs = (db) => Object.keys((db.main && db.main.data.reg) || {}).filter((k) => k.includes(':done:'));
+export const serverDoneVals = (db) => doneRegs(db).map((k) => db.main.data.reg[k].val);
+
 // Poll until a snapshot with the given reason exists on the server.
 export async function expectSnapshot(request, reason, timeout = 12000) {
   const start = Date.now();

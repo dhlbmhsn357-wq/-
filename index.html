@@ -890,6 +890,16 @@
   const backoff = a => Math.min(1000 * Math.pow(2, a), 15000) + Math.floor(Math.random()*400);
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
   let syncing = false, syncQueued = false, changeSeq = 0;
+  // Retry a FAILED sync a few times with backoff (e.g. the network wasn't quite ready right after an
+  // 'online' event). Without this a single failed reconnect-sync would wait for the next focus/online.
+  let retryTimer = null, retryCount = 0;
+  const MAX_SYNC_RETRIES = 5;
+  function clearSyncRetry(){ clearTimeout(retryTimer); retryTimer = null; retryCount = 0; }
+  function scheduleSyncRetry(){
+    if(retryTimer || retryCount >= MAX_SYNC_RETRIES || navigator.onLine === false) return;
+    retryCount++;
+    retryTimer = setTimeout(()=>{ retryTimer = null; syncNow(); }, Math.min(2000 * retryCount, 8000));
+  }
 
   // v2 sync: pull → merge (LWW + tombstones + epoch) → compare-and-swap commit, retrying on conflict
   // with backoff and re-merge; never a forced overwrite. Idempotent by the pending op's op_id.
@@ -924,6 +934,7 @@
           await adoptEnrichedIfChanged(merged);
           await persistBaseV2(merged, serverRev);
           if(changeSeq===seqAtStart){ await clearPending(merged, serverRev); if(hadPending) syncState='saved'; }
+          clearSyncRetry();
           return;
         }
         const commit = await rpc('ayyam_commit', { p_key:key, p_expected_revision: serverRev, p_data: merged, p_op_id: opId, p_reason: commitReason });
@@ -935,12 +946,14 @@
         await persistBaseV2(merged, commit.revision);
         if(changeSeq===seqAtStart){ await clearPending(merged, commit.revision); if(hadPending) syncState='saved'; }
         else { setPending(true); } // edits arrived during sync → keep pending; will re-run below
+        clearSyncRetry();
         return;
       }
       syncState = 'error'; // exhausted retries
     }catch(e){
       if(isPending()) syncState = navigator.onLine===false ? 'offline' : 'error';
       if(store) store.logDiag({ type:'sync-error', message: String(e && e.name || 'err') });
+      scheduleSyncRetry(); // e.g. the network wasn't ready right after 'online' → try again shortly
     }finally{
       syncing = false;
       updateSyncBadge();

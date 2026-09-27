@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { prepare, resetBackend, addTask, taskRow, waitSynced, expectServerContains } from '../helpers.mjs';
+import { prepare, resetBackend, addTask, taskRow, waitSynced, expectServerContains, waitServer, serverDoneVals } from '../helpers.mjs';
 
 test.beforeEach(async ({ request }) => { await resetBackend(request); });
 
@@ -46,7 +46,7 @@ test('delete on one device is not revived by a stale device (tombstone wins)', a
   await taskRow(B.page, 'هدف مشترك').locator('.task-del').click();
   await expect(B.page.locator('.task-title', { hasText: 'هدف مشترك' })).toHaveCount(0);
   await B.page.evaluate(() => window.dispatchEvent(new Event('online')));
-  await waitSynced(B.page);
+  await waitServer(request, (db) => Object.keys((db.main.data.tomb) || {}).length > 0);
 
   // A returns — it still holds the task locally, but must NOT resurrect it after syncing
   await page.context().setOffline(false);
@@ -55,7 +55,7 @@ test('delete on one device is not revived by a stale device (tombstone wins)', a
   await B.ctx.close();
 });
 
-test('done on one device, undone on another: the later action wins deterministically', async ({ page, browser }) => {
+test('done on one device, undone on another: the later action wins deterministically', async ({ page, browser, request }) => {
   await prepare(page, { key: true });
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
@@ -68,7 +68,7 @@ test('done on one device, undone on another: the later action wins deterministic
   const B = await openDevice(browser);
   await expect(taskRow(B.page, 'مهمة الإكمال').locator('.check')).toHaveClass(/checked/); // B sees done
   await taskRow(B.page, 'مهمة الإكمال').locator('.check').click(); // B undoes (later)
-  await waitSynced(B.page);
+  await waitServer(request, (db) => serverDoneVals(db).every((v) => v === false) && serverDoneVals(db).length >= 0 && !serverDoneVals(db).includes(true));
 
   // A pulls → reflects B's later "undone"
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
