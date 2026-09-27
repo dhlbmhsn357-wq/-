@@ -7,6 +7,27 @@
   const PERIOD_KEYS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
   const PERIOD_LABEL = { fajr: 'الفجر', dhuhr: 'الظهر', asr: 'العصر', maghrib: 'المغرب', isha: 'العشاء' };
   const JSDAY_TO_CODE = { 0: 'sun', 1: 'mon', 2: 'tue', 3: 'wed', 4: 'thu', 5: 'fri', 6: 'sat' };
+  const WEEKDAY_TO_CODE = { Sun: 'sun', Mon: 'mon', Tue: 'tue', Wed: 'wed', Thu: 'thu', Fri: 'fri', Sat: 'sat' };
+  // Calendar day in the LOCATION timezone (NOT the runtime TZ) so the plan is correct on any host.
+  function localParts(nowMs, tz) {
+    try {
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+      }).formatToParts(new Date(nowMs)).map((p) => [p.type, p.value]));
+      return { y: Number(parts.year), m: Number(parts.month), d: Number(parts.day),
+        key: parts.year + '-' + parts.month + '-' + parts.day, dayCode: WEEKDAY_TO_CODE[parts.weekday] };
+    } catch (e) {
+      const d = new Date(nowMs);
+      return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate(), key: dateKey(d), dayCode: JSDAY_TO_CODE[d.getDay()] };
+    }
+  }
+  function addDays(parts, n) { // advance a Y/M/D by n days via a UTC anchor (DST-safe for date math)
+    const t = Date.UTC(parts.y, parts.m - 1, parts.d) + n * 86400000;
+    const d = new Date(t);
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(),
+      key: d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()),
+      dayCode: JSDAY_TO_CODE[d.getUTCDay()] };
+  }
   const DEFAULT_LOC = { lat: 30.0444, lng: 31.2357, tz: 'Africa/Cairo' };
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
   const AR = { '0': '٠', '1': '١', '2': '٢', '3': '٣', '4': '٤', '5': '٥', '6': '٦', '7': '٧', '8': '٨', '9': '٩' };
@@ -59,11 +80,12 @@
     const nowMs = opts.now || Date.now();
     const days = Number.isFinite(opts.days) ? Math.max(1, Math.min(opts.days, 14)) : 3;
     const loc = cleanLoc(opts.location || (isObj(state.prefs) ? state.prefs.location : null));
+    const base = localParts(nowMs, loc.tz); // "today" in the user's timezone
     const items = [];
     for (let i = 0; i < days; i++) {
-      const d = new Date(nowMs); d.setDate(d.getDate() + i);
-      const key = dateKey(d), code = JSDAY_TO_CODE[d.getDay()];
-      let times; try { times = prayerTimes(adhan, loc, d.getFullYear(), d.getMonth() + 1, d.getDate()); } catch (e) { continue; }
+      const day = i === 0 ? base : addDays(base, i);
+      const key = day.key, code = day.dayCode;
+      let times; try { times = prayerTimes(adhan, loc, day.y, day.m, day.d); } catch (e) { continue; }
       const tasks = tasksFor(state, key, code);
       for (const period of PERIOD_KEYS) {
         const t = times[period];
