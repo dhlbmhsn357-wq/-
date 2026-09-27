@@ -82,9 +82,9 @@ public class AyyamWidgetProvider extends AppWidgetProvider {
         mgr.updateAppWidget(id, buildRemoteViews(context, WidgetSnapshotStore.read(context), todayLocal(), maxRowsFor(mgr, id), id));
     }
 
-    /** Build the widget RemoteViews from a snapshot. Package-visible so an instrumented test can
-     *  inflate it via RemoteViews.apply(...) and assert its content without a launcher. */
-    RemoteViews buildRemoteViews(Context context, String snapshot, String today, int maxRows, int id) {
+    /** Build the widget RemoteViews from a snapshot. Public so an instrumented test can inflate it
+     *  via RemoteViews.apply(...) and assert its content without a launcher. */
+    public RemoteViews buildRemoteViews(Context context, String snapshot, String today, int maxRows, int id) {
         RemoteViews rv = new RemoteViews(context.getPackageName(), R.layout.widget_ayyam);
         WidgetRenderModel m = WidgetRenderModel.from(snapshot, today, maxRows);
 
