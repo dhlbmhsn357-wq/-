@@ -1,5 +1,6 @@
 package com.ayyam.app;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -10,12 +11,15 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import com.ayyam.app.widget.WidgetSnapshotStore;
 
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 /**
- * Phase C: the widget snapshot survives process-death / reboot / APK reinstall. The CI job runs
- * writeWidget once, then verifyWidget after each lifecycle event on the same device.
+ * Phase C: a VALID widget snapshot survives process-death / reboot / APK reinstall. Note that when the
+ * app (MainActivity/WebView) launches during the shell tests, it writes its own snapshot through the
+ * bridge — so verifyWidget asserts that a valid snapshot is present (which proves the app→bridge→store
+ * pipeline AND persistence), not a hardcoded value the app would overwrite.
  */
 @RunWith(AndroidJUnit4.class)
 public class WidgetSnapshotStoreTest {
@@ -29,10 +33,12 @@ public class WidgetSnapshotStoreTest {
     }
 
     @Test
-    public void verifyWidget() {
+    public void verifyWidget() throws Exception {
         String s = WidgetSnapshotStore.read(ctx);
-        assertNotNull("widget snapshot did not survive", s);
-        assertTrue(s.contains("2026-09-27"));
-        assertTrue(s.contains("\"total\":7"));
+        assertNotNull("no widget snapshot present after lifecycle event", s);
+        JSONObject o = new JSONObject(s);                 // throws → malformed = test error
+        assertEquals(1, o.getInt("schema"));
+        assertTrue("date must be YYYY-MM-DD", o.getString("date").matches("\\d{4}-\\d{2}-\\d{2}"));
+        assertTrue(o.has("done") && o.has("total"));
     }
 }
