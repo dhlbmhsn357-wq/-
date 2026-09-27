@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup rules (API 30 and below). Exclude the Keystore-backed secure store that holds the
+     device key. Ordinary local app data (WebView IndexedDB/localStorage) is left to default backup. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="ayyam_secure_store.xml" />
+</full-backup-content>

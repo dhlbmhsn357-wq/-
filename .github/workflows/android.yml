@@ -1,0 +1,74 @@
+name: Android
+
+on:
+  push:
+    branches: [android-v1]
+  pull_request:
+    branches: [android-v1]
+
+permissions:
+  contents: read
+
+jobs:
+  android-build:
+    name: android-build-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - name: Install JS deps
+        run: npm ci
+      - name: Assemble web dir (native-only injection) + Capacitor sync
+        run: |
+          node scripts/build-webdir.mjs
+          npx cap sync android
+      - name: Build Debug APK + lint
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:lintDebug --stacktrace
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ayyam-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+  android-emulator:
+    name: android-emulator-persistence
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - name: Install JS deps + assemble web dir + sync
+        run: |
+          npm ci
+          node scripts/build-webdir.mjs
+          npx cap sync android
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build APK + test APK
+        run: |
+          cd android && chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+      - name: Persistence proofs on emulator (process-death / reboot / reinstall / offline)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash scripts/android-persistence.sh

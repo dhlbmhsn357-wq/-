@@ -1,6 +1,10 @@
 (async function(){
   "use strict";
 
+  // Native Android shell detection (Capacitor). FALSE on web/PWA (AyyamNative is injected only inside
+  // the APK by build-webdir), so every native-guarded branch below is a no-op on the web.
+  const NATIVE = (typeof AyyamNative !== 'undefined') && AyyamNative.isNativeAndroid && AyyamNative.isNativeAndroid();
+
   const BG_URL = 'bg.jpg'; // loaded only when the background is enabled
 
   const PERIODS = [
@@ -338,8 +342,10 @@
 
   // ---------- device key (per device, entered once; never shown/logged/committed) ----------
   const LS_DEVICE_KEY = 'ayyam_device_key_v1';
-  function getDeviceKey(){ try{ return localStorage.getItem(LS_DEVICE_KEY) || ''; }catch(e){ return ''; } }
-  function setDeviceKey(k){ try{ k ? localStorage.setItem(LS_DEVICE_KEY, k) : localStorage.removeItem(LS_DEVICE_KEY); }catch(e){} }
+  // On native Android the key lives in Android Keystore-backed secure storage (hydrated into memory at
+  // startup so these stay synchronous). On web it stays in localStorage exactly as before.
+  function getDeviceKey(){ if(NATIVE) return AyyamNative.getKeyCached(); try{ return localStorage.getItem(LS_DEVICE_KEY) || ''; }catch(e){ return ''; } }
+  function setDeviceKey(k){ if(NATIVE){ try{ AyyamNative.setKey(k); }catch(e){} return; } try{ k ? localStorage.setItem(LS_DEVICE_KEY, k) : localStorage.removeItem(LS_DEVICE_KEY); }catch(e){} }
   let needsKey = false; // true when the server rejected our key (or none set) and we have changes to sync
   // Entered once per device, kept only in this device's localStorage. Never shown elsewhere or logged.
   function promptForKey(){
@@ -1403,7 +1409,9 @@
     // Manifest and icons are static files (manifest.webmanifest, icon-*.png) linked in <head>.
 
     // Service worker: offline support + push notifications, with a safe update-on-demand flow.
-    if('serviceWorker' in navigator){
+    // Disabled in the native Android shell: Capacitor serves a local app shell from the APK, so the SW's
+    // caching role is redundant (avoids two competing cache layers). Web/PWA keeps the SW unchanged.
+    if('serviceWorker' in navigator && !NATIVE){
       // relative path so it also works when hosted under a sub-path (e.g. GitHub Pages)
       navigator.serviceWorker.register('sw.js').then((reg)=>{
         // A worker is already waiting (installed a new coherent version) → offer the update.
@@ -1635,6 +1643,9 @@
     if(loadingEl) loadingEl.classList.add('hidden');
     render();
   });
+
+  // Native: load the secure device key into memory before anything reads it, and sync on app resume.
+  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>scheduleSync()); }catch(e){} }
 
   const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
   if(init.state) setState(init.state);
