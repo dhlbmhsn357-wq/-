@@ -61,6 +61,15 @@
     secureBacking() { return _backing; },
     isDegraded() { return _degraded; },
     onResume(fn) { if (typeof fn === 'function') resumeCbs.push(fn); },
+    // Push a derived widget view-model to native storage. Best-effort: NEVER throws, so a widget
+    // failure can never affect the app's own (already-completed) save. Returns {ok|skipped|error}.
+    async updateWidgetSnapshot(snapshot) {
+      if (!isNativeAndroid()) return { ok: false, skipped: true };
+      const WB = plugin('WidgetBridge');
+      if (!WB) return { ok: false, skipped: true };
+      try { const r = await WB.updateSnapshot({ snapshot }); return { ok: !!(r && r.ok) }; }
+      catch (e) { return { ok: false, error: true }; }
+    },
   };
   global.AyyamNative = AyyamNative;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -14,10 +14,9 @@ const WWW = join(ROOT, 'www');
 const FILES = ['index.html', 'manifest.webmanifest', 'sw.js',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'bg.jpg'];
 const DIRS = ['css', 'js'];
-// Native-only modules, copied from android/native-web/ into www/js and injected into index.html.
-// Phase B ships only native.js (env detection + lifecycle + secure device-key + SW gate).
-// widget-model.js is added in Phase C/D.
-const NATIVE_JS = ['native.js'];
+// Native-only modules, copied from native-web/ into www/js and injected into index.html (before app.js).
+// widget-model.js must load before native.js/app.js so AyyamWidget exists when app.js builds snapshots.
+const NATIVE_JS = ['widget-model.js', 'native.js'];
 
 rmSync(WWW, { recursive: true, force: true });
 mkdirSync(join(WWW, 'js'), { recursive: true });

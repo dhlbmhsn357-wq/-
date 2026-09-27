@@ -338,6 +338,7 @@
     if(!$('mainView').classList.contains('hidden')) render();
     if(!$('settingsView').classList.contains('hidden')){ renderTplDays(); renderTplTasks(); }
     if(!$('reportsView').classList.contains('hidden')) renderReports();
+    scheduleWidgetPush(); // adopt/merge/pull/reset changed today's data → refresh widget snapshot
   }
 
   // ---------- device key (per device, entered once; never shown/logged/committed) ----------
@@ -597,6 +598,24 @@
     return Math.round((done/tasks.length)*100);
   }
 
+  // ---------- native widget snapshot (native Android only; no-op on web) ----------
+  // The widget is a DERIVED, best-effort mirror. This runs AFTER the app's own durable save, is
+  // debounced, and is fully failure-isolated: a bridge/build failure logs a diagnostic and never
+  // rolls back or blocks task data. The snapshot always represents TODAY (what the widget shows).
+  let widgetTimer = null;
+  function widgetPrivacy(){ try{ return localStorage.getItem('ayyam_widget_privacy_v1')==='1'; }catch(e){ return false; } }
+  function todayWidgetLabel(d){ const code=dayCodeFor(d); return (DAY_LABELS[code]||'') + ' ' + d.toLocaleDateString('ar-EG',{day:'numeric',month:'long'}); }
+  function pushWidgetSnapshotNow(){
+    if(!NATIVE || typeof AyyamWidget==='undefined') return;
+    try{
+      const today = new Date();
+      const tasks = tasksForDate(today).map(t=>({ id:t.id, title:t.title, time:t.time, period:t.period, done:t.done }));
+      const snap = AyyamWidget.buildSnapshot({ date: dateKey(today), dayLabel: todayWidgetLabel(today), tasks, now: Date.now(), privacy: widgetPrivacy() });
+      AyyamNative.updateWidgetSnapshot(snap).then(r=>{ if(store && r && !r.ok && !r.skipped) store.logDiag({ type:'widget-bridge-fail' }); }).catch(()=>{});
+    }catch(e){ if(store) store.logDiag({ type:'widget-build-fail' }); }
+  }
+  function scheduleWidgetPush(){ if(!NATIVE) return; clearTimeout(widgetTimer); widgetTimer = setTimeout(pushWidgetSnapshotNow, 500); }
+
   function toArabicNum(n){
     const map = {'0':'٠','1':'١','2':'٢','3':'٣','4':'٤','5':'٥','6':'٦','7':'٧','8':'٨','9':'٩'};
     return String(n).replace(/[0-9]/g, d=>map[d]);
@@ -625,6 +644,7 @@
     renderWeekStrip();
     renderMissingBanner();
     renderGroups();
+    scheduleWidgetPush(); // native-only; refresh the widget's TODAY snapshot after any visible change
   }
 
   function renderMissingBanner(){
@@ -1645,7 +1665,7 @@
   });
 
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
-  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>scheduleSync()); }catch(e){} }
+  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); }); }catch(e){} }
 
   const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
   if(init.state) setState(init.state);
@@ -1663,5 +1683,6 @@
   }
   updateSyncBadge();
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
+  scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
   autoRefreshLocation();
 })();

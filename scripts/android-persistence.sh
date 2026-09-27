@@ -27,25 +27,32 @@ wait_boot
 adb install -r "$APK"
 adb install -r "$TESTAPK"
 
-echo "### 1) fresh write (local-asset load + IDB write + Keystore write)"
+echo "### 0) widget store validation (schema / last-known-good / rapid / no-secret)"
+runtest 'com.ayyam.app.WidgetStoreValidationTest'
+
+echo "### 1) fresh write (local-asset load + IDB + Keystore + widget snapshot)"
 runtest 'com.ayyam.app.ShellPersistenceTest#writeMarker'
 runtest 'com.ayyam.app.SecureStoreTest#writeKey'
+runtest 'com.ayyam.app.WidgetSnapshotStoreTest#writeWidget'
 
 echo "### 2) process death (force-stop) then verify"
 adb shell am force-stop "$PKG"
 runtest 'com.ayyam.app.ShellPersistenceTest#verifyMarker'
 runtest 'com.ayyam.app.SecureStoreTest#verifyKey'
+runtest 'com.ayyam.app.WidgetSnapshotStoreTest#verifyWidget'
 
 echo "### 3) reboot then verify"
 adb reboot
 wait_boot
 runtest 'com.ayyam.app.ShellPersistenceTest#verifyMarker'
 runtest 'com.ayyam.app.SecureStoreTest#verifyKey'
+runtest 'com.ayyam.app.WidgetSnapshotStoreTest#verifyWidget'
 
 echo "### 4) APK update over same package (reinstall keeping data) then verify"
 adb install -r "$APK"
 runtest 'com.ayyam.app.ShellPersistenceTest#verifyMarker'
 runtest 'com.ayyam.app.SecureStoreTest#verifyKey'
+runtest 'com.ayyam.app.WidgetSnapshotStoreTest#verifyWidget'
 
 echo "### 5) offline app-shell load"
 adb shell svc wifi disable || true

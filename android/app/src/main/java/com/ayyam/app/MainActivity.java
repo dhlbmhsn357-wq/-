@@ -2,6 +2,7 @@ package com.ayyam.app;
 
 import android.os.Bundle;
 
+import com.ayyam.app.bridge.WidgetBridgePlugin;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -9,6 +10,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Register local plugins BEFORE the bridge initializes.
         registerPlugin(SecureStorePlugin.class);
+        registerPlugin(WidgetBridgePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
