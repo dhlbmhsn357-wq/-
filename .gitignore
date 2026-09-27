@@ -1,3 +1,9 @@
 supabase/functions/.env
 supabase/.temp/
 supabase/.secrets.env
+backups/
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
