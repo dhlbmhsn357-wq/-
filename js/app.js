@@ -93,6 +93,7 @@
   const LS_PENDING = 'ayyam_sync_pending_v1'; // '1' while there are local edits not yet on the server
 
   let syncState = 'idle'; // idle | syncing | error | offline
+  let lastSyncOkAt = null; // ms epoch of the last successful sync (diagnostics only)
   let saveTimer = null;
 
   function updateSyncBadge(){
@@ -406,6 +407,7 @@
           await adoptEnrichedIfChanged(merged);
           await persistBaseV2(merged, serverRev);
           if(changeSeq===seqAtStart){ await clearPending(merged, serverRev); if(hadPending) syncState='saved'; }
+          lastSyncOkAt = Date.now();
           clearSyncRetry();
           return;
         }
@@ -418,6 +420,7 @@
         await persistBaseV2(merged, commit.revision);
         if(changeSeq===seqAtStart){ await clearPending(merged, commit.revision); if(hadPending) syncState='saved'; }
         else { setPending(true); } // edits arrived during sync → keep pending; will re-run below
+        lastSyncOkAt = Date.now();
         clearSyncRetry();
         return;
       }
@@ -992,22 +995,56 @@
       });
     }catch(e){ return '—'; }
   }
-  async function updateDiagInfo(){
-    const el = $('diagInfo'); if(!el) return;
+  function syncStateLabel(){
+    const m = { idle:'خامل', syncing:'يتزامن الآن', saved:'تمّت المزامنة', error:'خطأ مؤقت', offline:'غير متصل', 'need-key':'يحتاج مفتاح المزامنة' };
+    return m[syncState] || syncState;
+  }
+  function relTime(ts){
+    if(!ts) return '—';
+    const s = Math.max(0, Math.round((Date.now()-ts)/1000));
+    if(s < 60) return 'قبل ' + toArabicNum(s) + ' ث';
+    const mn = Math.round(s/60); if(mn < 60) return 'قبل ' + toArabicNum(mn) + ' د';
+    const h = Math.round(mn/60); if(h < 24) return 'قبل ' + toArabicNum(h) + ' س';
+    return 'قبل ' + toArabicNum(Math.round(h/24)) + ' يوم';
+  }
+  // Non-sensitive diagnostics ONLY. Never the device key/hash, push endpoint, p256dh/auth,
+  // coordinates, secrets or raw bundle data — see the field list below.
+  async function collectDiag(){
     let pushActive = false;
     try{ if('serviceWorker' in navigator && 'PushManager' in window){ const reg = await navigator.serviceWorker.ready; pushActive = !!(await reg.pushManager.getSubscription()); } }catch(e){}
     const sw = await getSwVersion();
-    const lines = [
-      'إصدار التطبيق: ' + APP_VERSION + (sw!=='—' ? ' · عامل الخدمة: ' + sw : ''),
+    let outbox = isPending() ? 1 : 0, recovery = 0, schema = null;
+    try{ if(store){ outbox = (await store.listOutbox()).length; recovery = (await store.getRecovery()).length; schema = store.schemaVersion; } }catch(e){}
+    const localOnly = (function(){ try{ return localStorage.getItem('ayyam_local_only_v1')==='1'; }catch(e){ return false; } })();
+    return [
+      'إصدار التطبيق: ' + APP_VERSION,
+      'عامل الخدمة: ' + sw,
+      'مخطط قاعدة البيانات: ' + (typeof schema==='number' ? toArabicNum(schema) : '—'),
       'الاتصال: ' + (navigator.onLine ? 'متصل' : 'غير متصل'),
-      'التخزين المحلي: ' + (storageDegraded ? 'محدود (بدون قاعدة بيانات)' : (store && store.newerSchema ? 'إصدار أحدث — يُنصح بتحديث التطبيق' : 'سليم')),
-      'تغييرات غير مرفوعة: ' + (isPending() ? 'نعم' : 'لا'),
+      'حالة المزامنة: ' + syncStateLabel(),
+      'آخر مزامنة ناجحة: ' + relTime(lastSyncOkAt),
       'رقم المراجعة على الخادم: ' + (baseRevision!=null ? toArabicNum(baseRevision) : '—'),
-      'مفتاح المزامنة: ' + (getDeviceKey() ? 'مُدخل' : 'غير مُدخل'),
+      'رقم الجيل (epoch): ' + ((enriched && enriched.epoch!=null) ? toArabicNum(enriched.epoch) : '—'),
+      'تغييرات غير مرفوعة: ' + toArabicNum(outbox),
+      'عناصر الاسترجاع: ' + toArabicNum(recovery),
       'الإشعارات: ' + (pushActive ? 'مفعّلة' : 'غير مفعّلة'),
-      (function(){ try{ return localStorage.getItem('ayyam_local_only_v1')==='1' ? 'الوضع: نسخة محلية لم تُزامن بعد' : ''; }catch(e){ return ''; } })(),
-    ].filter(Boolean);
-    el.textContent = lines.join('\n');
+      'مفتاح المزامنة: ' + (getDeviceKey() ? 'مُدخل' : 'غير مُدخل'),
+      'التخزين المحلي: ' + (storageDegraded ? 'محدود (بدون قاعدة بيانات)' : (store && store.newerSchema ? 'إصدار أحدث — يُنصح بتحديث التطبيق' : 'سليم')),
+      'الوضع المحلي فقط: ' + (localOnly ? 'نعم' : 'لا'),
+      'معرّف الجهاز: ' + (DEVICE_ID ? DEVICE_ID.slice(0,8) : '—'),
+    ];
+  }
+  async function updateDiagInfo(){
+    const el = $('diagInfo'); if(!el) return;
+    el.textContent = (await collectDiag()).join('\n');
+  }
+  async function copyDiag(){
+    try{
+      const txt = (await collectDiag()).join('\n');
+      if(navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(txt);
+      else { const ta=document.createElement('textarea'); ta.value=txt; ta.setAttribute('readonly',''); document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+      const b=$('copyDiag'); if(b){ const o=b.textContent; b.textContent='تم النسخ ✓'; setTimeout(()=>{ b.textContent=o; }, 1500); }
+    }catch(e){ alert('تعذّر النسخ'); }
   }
   function closeSettings(){
     $('settingsView').classList.add('hidden');
@@ -1232,6 +1269,7 @@
   // reports
   $('openReports').addEventListener('click', openReports);
   $('closeReports').addEventListener('click', closeReports);
+  { const cd = $('copyDiag'); if(cd) cd.addEventListener('click', copyDiag); }
   Array.from(document.querySelectorAll('.report-tab')).forEach(tab=>{
     tab.addEventListener('click', ()=>{
       reportRange = tab.dataset.range;

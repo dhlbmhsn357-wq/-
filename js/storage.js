@@ -83,6 +83,8 @@
       // If the data was written by a NEWER app schema, do not touch it — surface it so the app can show a
       // recovery-safe message instead of wiping anything.
       store.newerSchema = !!(meta && meta.schemaVersion > SCHEMA_VERSION);
+      store.schemaVersion = SCHEMA_VERSION; // app schema (for diagnostics)
+      store.dbVersion = DB_VERSION;
       return store;
     }
 
