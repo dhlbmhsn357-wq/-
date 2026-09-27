@@ -110,32 +110,6 @@
       try { return await WB.getStatus(); } catch (e) { return null; }
     },
     secureState() { return { backing: _backing, degraded: _degraded }; },
-    // Native push channel status for diagnostics (never the token).
-    pushChannel() {
-      if (!isNativeAndroid()) return { channel: 'webpush' };
-      return { channel: 'fcm', configured: !!plugin('PushNotifications') };
-    },
-    // Register for native FCM push. Returns the token to the caller (app.js) which registers it on the
-    // backend via the device-key-gated RPC. The token is NEVER logged here. Dormant until the
-    // @capacitor/push-notifications plugin + Firebase config are added (then this path activates).
-    async registerAndroidPush() {
-      if (!isNativeAndroid()) return { status: 'unsupported', reason: 'not-native' };
-      const PN = plugin('PushNotifications');
-      if (!PN) return { status: 'unsupported', reason: 'fcm-not-configured' };
-      try {
-        let perm = await PN.checkPermissions();
-        if (perm.receive !== 'granted') perm = await PN.requestPermissions(); // Android 13+ prompt on user action
-        if (perm.receive === 'denied') return { status: 'denied' };
-        if (perm.receive !== 'granted') return { status: 'not-granted' };
-        const token = await new Promise((res, rej) => {
-          const t = setTimeout(() => rej(new Error('token-timeout')), 15000);
-          PN.addListener('registration', (tok) => { clearTimeout(t); res(tok && tok.value); });
-          PN.addListener('registrationError', () => { clearTimeout(t); rej(new Error('reg-error')); });
-          PN.register();
-        });
-        return token ? { status: 'token', token } : { status: 'error' };
-      } catch (e) { return { status: 'error' }; }
-    },
   };
   global.AyyamNative = AyyamNative;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

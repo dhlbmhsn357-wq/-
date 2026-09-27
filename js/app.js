@@ -672,22 +672,6 @@
       AyyamNative.exitApp();                                                        // 4. nothing → exit
     }catch(e){ try{ AyyamNative.exitApp(); }catch(_){} }
   }
-  // Native Android push (FCM). Same 🔔 philosophy: user-initiated. Registers the FCM token on the
-  // backend via the device-key-gated RPC. The token is never shown/logged. Dormant until FCM is configured.
-  async function enableNativePush(){
-    const key = getDeviceKey();
-    if(!key){ promptForKey(); return; }
-    let r; try{ r = await AyyamNative.registerAndroidPush(); }catch(e){ r = { status:'error' }; }
-    if(r.status==='unsupported'){ alert('إشعارات أندرويد غير مُهيّأة بعد على هذا الإصدار.'); return; }
-    if(r.status==='denied' || r.status==='not-granted'){ alert('لم يُمنح إذن الإشعارات. فعّله من إعدادات التطبيق ثم أعد المحاولة.'); return; }
-    if(r.status!=='token'){ alert('تعذّر تفعيل الإشعارات. حاول لاحقًا.'); return; }
-    try{
-      const { data, error } = await withTimeout(sb.rpc('register_android_push', { p_key:key, p_token:r.token, p_device_id:DEVICE_ID }), SYNC_TIMEOUT_MS);
-      if(!error && data && data.status==='ok'){ if(store) store.logDiag({ type:'fcm-registered' }); const b=$('notifyBtn'); if(b){ b.textContent='🔔✓'; b.setAttribute('aria-label','الإشعارات مفعّلة'); } } // never log the token
-      else if(data && data.status==='unauthorized'){ setDeviceKey(''); alert('مفتاح المزامنة غير صحيح. أعد إدخاله ثم فعّل الإشعارات.'); }
-      else alert('تعذّر تسجيل الإشعارات على الخادم.');
-    }catch(e){ alert('تعذّر تسجيل الإشعارات. تأكد من الاتصال وحاول مرة أخرى.'); }
-  }
 
   function toArabicNum(n){
     const map = {'0':'٠','1':'١','2':'٢','3':'٣','4':'٤','5':'٥','6':'٦','7':'٧','8':'٨','9':'٩'};
@@ -1132,8 +1116,6 @@
           if(ws.generatedAt) nativeLines.push('تحديث لقطة الودجت: ' + relTime(Date.parse(ws.generatedAt)));
         }
         nativeLines.push('خصوصية الودجت: ' + (widgetPrivacy() ? 'مفعّلة (إخفاء الأسماء)' : 'غير مفعّلة'));
-        const pc = AyyamNative.pushChannel ? AyyamNative.pushChannel() : null;
-        if(pc) nativeLines.push('قناة الإشعارات: ' + (pc.channel==='fcm' ? ('FCM' + (pc.configured ? '' : ' (غير مُهيّأة بعد)')) : 'Web Push'));
       }catch(e){}
     }
     return [
@@ -1648,16 +1630,6 @@
     }
 
     async function setupNotifyButton(){
-      // Native Android: Web Push is unavailable in the WebView (proven in F1) → use the FCM channel.
-      // The button shows only once FCM is configured (plugin + Firebase); until then it stays hidden.
-      if(NATIVE){
-        const pc = AyyamNative.pushChannel ? AyyamNative.pushChannel() : {configured:false};
-        if(pc.configured){
-          $('notifyBtn').classList.remove('hidden');
-          $('notifyBtn').addEventListener('click', enableNativePush);
-        }
-        return;
-      }
       if(!(await isPushSupported())) return; // keep hidden if unsupported
       $('notifyBtn').classList.remove('hidden');
       const existing = await getExistingPushSubscription();

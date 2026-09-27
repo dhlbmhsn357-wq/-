@@ -2,13 +2,10 @@
 // classification + state transitions via injected DB ops. No I/O of its own, so it is unit-tested
 // with a fake Web Push provider (tests/unit/push-delivery.test.mjs) instead of sending real pushes.
 
-// Classify a push send failure. Works for BOTH channels by HTTP status:
-//   gone      → 404/410/403: the target is dead (Web Push subscription gone, or FCM UNREGISTERED/
-//               sender-mismatch); disable + clean it.
+// Classify a Web Push send failure.
+//   gone      → 404/410/403: the subscription is dead; disable + clean it.
 //   retryable → 429, 5xx, or a network/timeout error: try again later with backoff (NOT sent).
-//   terminal  → other 4xx (e.g. 400 malformed payload): give up on this delivery, keep the target.
-// (FCM HTTP v1: 404 NOT_FOUND=unregistered→gone, 403=SenderId mismatch→gone, 400=INVALID_ARGUMENT→
-//  terminal, 429/500/503→retryable — matches this mapping.)
+//   terminal  → other 4xx (e.g. 400 malformed): give up on this delivery, but keep the subscription.
 export function classifyError(err) {
   const code = err && (err.statusCode || err.status);
   if (code === 404 || code === 410 || code === 403) return 'gone';
@@ -45,7 +42,7 @@ export async function processBatch(batch, ops, opts = {}) {
     } catch (err) {
       const kind = classifyError(err);
       const msg = String((err && (err.statusCode || err.status)) || (err && err.message) || 'error').slice(0, 300);
-      if (kind === 'gone') { await ops.disable(item.delivery_id, msg, item.channel); counts.gone++; }
+      if (kind === 'gone') { await ops.disable(item.delivery_id, msg); counts.gone++; }
       else if (kind === 'terminal') { await ops.markFailed(item.delivery_id, msg, false, maxAttempts, backoffBase); counts.terminal++; }
       else { await ops.markFailed(item.delivery_id, msg, true, maxAttempts, backoffBase); counts.retryable++; }
     }
