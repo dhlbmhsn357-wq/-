@@ -1,0 +1,10 @@
+# Shell scripts and the Gradle wrapper MUST stay LF or they break on the Linux CI runner.
+*.sh text eol=lf
+gradlew text eol=lf
+*.mjs text eol=lf
+# Binaries git must never touch.
+*.jar binary
+*.png binary
+*.jpg binary
+*.webp binary
+*.keystore binary
