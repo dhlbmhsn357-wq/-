@@ -156,3 +156,50 @@ test('diagnostics ring buffer stays capped', async () => {
   const all = await s.getDiag();
   assert.ok(all.length <= 200, `diag length ${all.length}`);
 });
+
+test('reopening preserves ALL records (state, base, outbox, recovery, meta)', async () => {
+  let s = await AyyamStore.open();
+  const enriched = { v: 2, epoch: 1, reg: { 'g:2026-09-10:ext:t': { val: { title: 'x' }, t: 5, by: 'A' } }, tomb: { 'g:2026-09-10:ext:z': { t: 9, by: 'B' } } };
+  await s.saveEdit(enriched, 'op-1', { reason: 'sync', base_revision: 7 });
+  await s.putBase({ data: enriched, revision: 7, epoch: 1 });
+  await s.saveRecovery({ reason: 'epoch-fence', data: { logs: {} } });
+  s.close();
+  s = await AyyamStore.open();
+  assert.equal((await s.getState()).epoch, 1);
+  assert.deepEqual(Object.keys((await s.getState()).tomb), ['g:2026-09-10:ext:z']); // tombstone survived
+  assert.equal((await s.getBase()).revision, 7);
+  assert.equal((await s.listOutbox())[0].op_id, 'op-1');
+  assert.equal((await s.getRecovery())[0].reason, 'epoch-fence');
+});
+
+test('a schema UPGRADE that adds a store preserves existing stores\' data (non-destructive)', async () => {
+  // write with the current schema
+  let s = await AyyamStore.open();
+  await s.saveEdit({ v: 2, epoch: 0, reg: { k: { val: 1, t: 1, by: 'A' } }, tomb: {} }, 'op-x', {});
+  s.close();
+  // simulate a future version bump that ADDS a store and must not touch existing ones
+  const upgraded = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('ayyam', 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('future')) db.createObjectStore('future', { keyPath: 'k' });
+      // existing stores are left untouched
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  const tx = upgraded.transaction('kv', 'readonly');
+  const got = await new Promise((res) => { const r = tx.objectStore('kv').get('state'); r.onsuccess = () => res(r.result); });
+  assert.ok(got && got.v.reg.k, 'existing state survived the upgrade');
+  assert.ok(upgraded.objectStoreNames.contains('outbox'), 'outbox store still present');
+  assert.ok(upgraded.objectStoreNames.contains('future'), 'new store added');
+  upgraded.close();
+});
+
+test('newerSchema flag is set when the DB was written by a newer app', async () => {
+  let s = await AyyamStore.open();
+  await s.putMeta({ schemaVersion: 999 }); // pretend a newer app wrote this
+  s.close();
+  s = await AyyamStore.open();
+  assert.equal(s.newerSchema, true); // app can show a recovery-safe message instead of wiping
+});

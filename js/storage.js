@@ -80,6 +80,9 @@
       const store = new AyyamStore(db);
       const meta = await store.getMeta();
       store._seq = (meta && meta.lastSeq) || 0;
+      // If the data was written by a NEWER app schema, do not touch it — surface it so the app can show a
+      // recovery-safe message instead of wiping anything.
+      store.newerSchema = !!(meta && meta.schemaVersion > SCHEMA_VERSION);
       return store;
     }
 

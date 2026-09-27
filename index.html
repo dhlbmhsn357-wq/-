@@ -312,6 +312,13 @@
     font-family:'Cairo',sans-serif;font-size:11.5px;padding:6px 14px;border-radius:20px;
     box-shadow:0 4px 14px rgba(0,0,0,0.25);
   }
+  .update-banner{
+    position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));inset-inline-end:20px;z-index:160;
+    display:flex;align-items:center;gap:12px;max-width:calc(100% - 40px);
+    background:var(--surface2);border:1px solid var(--dhuhr);color:var(--text);
+    font-family:'Cairo',sans-serif;font-size:13px;padding:10px 14px;border-radius:14px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  }
 </style>
 </head>
 <body>
@@ -321,7 +328,23 @@
   <p>جارِ تحميل بياناتك...</p>
 </div>
 
+<!-- First-load state: shown only when there's no local data and the cloud can't confirm the user's data -->
+<div id="startupState" class="loading-overlay hidden">
+  <div id="startupIcon" style="font-size:34px;">☁️</div>
+  <p id="startupMsg" style="max-width:300px;text-align:center;line-height:1.7;"></p>
+  <div class="sheet-actions" style="max-width:300px;">
+    <button class="btn primary hidden" id="startupRetry">إعادة المحاولة</button>
+    <button class="btn ghost hidden" id="startupKey">إدخال مفتاح المزامنة</button>
+    <button class="btn ghost hidden" id="startupOffline">العمل مؤقتًا بدون اتصال</button>
+  </div>
+</div>
+
 <div id="syncBadge" class="sync-badge hidden"></div>
+<!-- App update available banner -->
+<div id="updateBanner" class="update-banner hidden">
+  <span>تحديث جديد متاح</span>
+  <button class="btn primary" id="updateNow" style="flex:none;padding:6px 14px;">تحديث الآن</button>
+</div>
 
 <div id="mainView">
   <header class="top">
@@ -454,6 +477,11 @@
     </div>
 
     <div class="report-card" style="margin-top:14px;">
+      <h3>تشخيص التطبيق</h3>
+      <p class="report-hint" id="diagInfo" style="margin-top:0;white-space:pre-line;line-height:1.9;"></p>
+    </div>
+
+    <div class="report-card" style="margin-top:14px;">
       <h3>إدارة البيانات</h3>
       <div class="sheet-actions" style="margin-top:0;">
         <button class="btn ghost" id="exportData">تصدير نسخة احتياطية</button>
@@ -583,6 +611,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
+  const APP_VERSION = '5.0.0'; // bump per release; kept in step with sw.js SW_VERSION
 
   const LS_TPL = 'ayyam_template_v1';
   const LS_LOG = 'ayyam_logs_v1';
@@ -948,14 +977,18 @@
     saveTimer = setTimeout(()=>syncNow(reason==='reset'?'reset':reason==='import'?'import':'sync'), 600);
   }
 
-  // Reconnecting or refocusing always syncs — to PUSH our changes and to PULL other devices' changes,
-  // even when this device has nothing pending.
-  window.addEventListener('online', ()=> syncNow());
+  // Reconnecting/refocusing/resuming always syncs — to PUSH our changes and PULL other devices'.
+  // A short debounce coalesces bursts of these events; syncNow itself is single-flight (no storms).
+  let syncDebounce = null;
+  function scheduleSync(){ clearTimeout(syncDebounce); syncDebounce = setTimeout(()=>syncNow(), 300); }
+  window.addEventListener('online', scheduleSync);
+  window.addEventListener('focus', scheduleSync);
+  window.addEventListener('pageshow', scheduleSync);       // bfcache resume (iOS/Safari)
   document.addEventListener('visibilitychange', ()=>{
     if(document.visibilityState==='hidden'){
-      if(saveTimer) syncNow();   // flush a pending edit before backgrounding
+      if(saveTimer) syncNow();   // flush a pending edit before backgrounding (local write already done)
     } else {
-      syncNow();                 // refocus: pull others' changes
+      scheduleSync();            // refocus/resume: pull others' changes
     }
   });
 
@@ -1453,12 +1486,42 @@
     renderTplTasks();
     applyPrefs();
     updateSyncKeyInfo();
+    updateDiagInfo();
   }
   function updateSyncKeyInfo(){
     const el = $('syncKeyInfo'); if(!el) return;
     el.textContent = getDeviceKey()
       ? 'هذا الجهاز مرتبط بمفتاح المزامنة. بياناتك تتزامن بأمان بين أجهزتك.'
       : 'لم يُدخل مفتاح المزامنة على هذا الجهاز بعد. أدخله ليتزامن مع أجهزتك الأخرى.';
+  }
+  // Diagnostics: non-sensitive status only. NEVER shows the device key, endpoints, coordinates or secrets.
+  async function getSwVersion(){
+    try{
+      if(!(navigator.serviceWorker && navigator.serviceWorker.controller)) return '—';
+      return await new Promise((resolve)=>{
+        const ch = new MessageChannel();
+        const t = setTimeout(()=>resolve('—'), 1000);
+        ch.port1.onmessage = (e)=>{ clearTimeout(t); resolve((e.data && e.data.version) || '—'); };
+        navigator.serviceWorker.controller.postMessage({ type:'GET_VERSION' }, [ch.port2]);
+      });
+    }catch(e){ return '—'; }
+  }
+  async function updateDiagInfo(){
+    const el = $('diagInfo'); if(!el) return;
+    let pushActive = false;
+    try{ if('serviceWorker' in navigator && 'PushManager' in window){ const reg = await navigator.serviceWorker.ready; pushActive = !!(await reg.pushManager.getSubscription()); } }catch(e){}
+    const sw = await getSwVersion();
+    const lines = [
+      'إصدار التطبيق: ' + APP_VERSION + (sw!=='—' ? ' · عامل الخدمة: ' + sw : ''),
+      'الاتصال: ' + (navigator.onLine ? 'متصل' : 'غير متصل'),
+      'التخزين المحلي: ' + (storageDegraded ? 'محدود (بدون قاعدة بيانات)' : (store && store.newerSchema ? 'إصدار أحدث — يُنصح بتحديث التطبيق' : 'سليم')),
+      'تغييرات غير مرفوعة: ' + (isPending() ? 'نعم' : 'لا'),
+      'رقم المراجعة على الخادم: ' + (baseRevision!=null ? toArabicNum(baseRevision) : '—'),
+      'مفتاح المزامنة: ' + (getDeviceKey() ? 'مُدخل' : 'غير مُدخل'),
+      'الإشعارات: ' + (pushActive ? 'مفعّلة' : 'غير مفعّلة'),
+      (function(){ try{ return localStorage.getItem('ayyam_local_only_v1')==='1' ? 'الوضع: نسخة محلية لم تُزامن بعد' : ''; }catch(e){ return ''; } })(),
+    ].filter(Boolean);
+    el.textContent = lines.join('\n');
   }
   function closeSettings(){
     $('settingsView').classList.add('hidden');
@@ -1815,10 +1878,38 @@
   function setupPWA(){
     // Manifest and icons are static files (manifest.webmanifest, icon-*.png) linked in <head>.
 
-    // Service worker: offline support + push notifications.
+    // Service worker: offline support + push notifications, with a safe update-on-demand flow.
     if('serviceWorker' in navigator){
       // relative path so it also works when hosted under a sub-path (e.g. GitHub Pages)
-      navigator.serviceWorker.register('sw.js').catch(()=>{ /* SW registration failed */ });
+      navigator.serviceWorker.register('sw.js').then((reg)=>{
+        // A worker is already waiting (installed a new coherent version) → offer the update.
+        if(reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg.waiting);
+        reg.addEventListener('updatefound', ()=>{
+          const nw = reg.installing;
+          if(!nw) return;
+          nw.addEventListener('statechange', ()=>{
+            // "installed" while a controller exists = an update is ready and WAITING (we never auto-activate).
+            if(nw.state==='installed' && navigator.serviceWorker.controller) showUpdateBanner(nw);
+          });
+        });
+        // check for an update shortly after load and when the app regains focus
+        setTimeout(()=>reg.update().catch(()=>{}), 3000);
+        document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') reg.update().catch(()=>{}); });
+      }).catch(()=>{ store && store.logDiag && store.logDiag({type:'sw-register-failed'}); });
+
+      // When the new worker takes control (after the user opts in), reload ONCE onto the coherent version.
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+        if(reloaded) return; reloaded = true; location.reload();
+      });
+    }
+    function showUpdateBanner(worker){
+      const banner = $('updateBanner'); if(!banner) return;
+      banner.classList.remove('hidden');
+      $('updateNow').onclick = ()=>{
+        $('updateNow').disabled = true;
+        worker.postMessage({ type:'SKIP_WAITING' }); // activate the waiting version → controllerchange → reload
+      };
     }
 
     // ---------- Push notifications setup ----------
@@ -1947,14 +2038,79 @@
   function enrichedIsEmpty(){ return !enriched || Object.keys(enriched.reg).length===0; }
   // Seed the default schedule on a truly fresh start. Stamped at a BASELINE time so a real edit made
   // on any device always wins, and with STABLE ids so two devices seeding converge (no duplicate schedule).
-  async function seedDefault(){
+  async function seedDefault(localOnly){
     const fresh = { template: defaultTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: EPOCH_KEY, versions: [] } };
-    enriched = M.toEnriched(fresh, 1);
+    enriched = M.toEnriched(fresh, 1); // baseline stamps → any real server data wins on merge (no blind overwrite)
     setState(M.materialize(enriched));
+    if(localOnly){ try{ localStorage.setItem('ayyam_local_only_v1','1'); }catch(e){} }
     setPending(true);
-    try{ await persistEnrichedEdit(enriched); }catch(e){}
+    try{ await persistEnrichedEdit(enriched); storageError=false; }catch(e){ storageError=true; }
     clearTimeout(saveTimer); saveTimer = setTimeout(()=>syncNow('init'), 300);
   }
+
+  // First-load pull on a device with no local data — classifies the outcome precisely so we never show
+  // the default schedule as if it were the user's real data when we simply couldn't reach the server.
+  // → 'ready' (adopted real data) | 'empty' (server reachable, no data) | 'need-key' | 'unreachable'
+  async function firstLoadPull(){
+    const key = getDeviceKey();
+    if(!key) return 'need-key';
+    if(!M || !sb) return 'unreachable';
+    try{
+      const pull = await rpc('ayyam_pull', { p_key: key });
+      if(pull.status === 'unauthorized'){ setDeviceKey(''); return 'need-key'; }
+      if(pull.exists){
+        const serverEn = M.toEnriched(pull.data, 1);
+        await adoptEnriched(serverEn, true);
+        await persistBaseV2(serverEn, pull.revision);
+        setPending(false);
+        return 'ready';
+      }
+      return 'empty';
+    }catch(e){ return 'unreachable'; }
+  }
+
+  // The first-load overlay: distinct, honest states (never defaults-as-data on an uncertain server).
+  function hideStartupState(){ const el=$('startupState'); if(el) el.classList.add('hidden'); }
+  function showStartupState(kind){
+    if(loadingEl) loadingEl.classList.add('hidden');
+    const el = $('startupState'); if(!el) return;
+    el.classList.remove('hidden');
+    const msg=$('startupMsg'), icon=$('startupIcon');
+    const retry=$('startupRetry'), keyBtn=$('startupKey'), off=$('startupOffline');
+    [retry,keyBtn,off].forEach(b=>b.classList.add('hidden'));
+    if(kind==='need-key'){
+      icon.textContent='🔑';
+      msg.textContent='لعرض بياناتك ومزامنتها بين أجهزتك، أدخل مفتاح المزامنة على هذا الجهاز.';
+      keyBtn.classList.remove('hidden');
+      off.classList.remove('hidden');
+    } else { // load-failed
+      icon.textContent='☁️';
+      msg.textContent='تعذّر تحميل بياناتك من السحابة. تحقّق من الاتصال وأعد المحاولة.';
+      retry.classList.remove('hidden');
+      off.classList.remove('hidden');
+    }
+  }
+  async function runFirstLoad(){
+    const r = await firstLoadPull();
+    if(r==='ready'){ hideStartupState(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
+    else if(r==='empty'){ hideStartupState(); await seedDefault(false); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
+    else if(r==='need-key'){ needsKey=true; syncState='need-key'; updateSyncBadge(); showStartupState('need-key'); }
+    else { showStartupState('load-failed'); } // unreachable
+  }
+  $('startupRetry').addEventListener('click', ()=>{ if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad(); });
+  $('startupKey').addEventListener('click', ()=>{
+    const k = window.prompt('مفتاح المزامنة (يُدخل مرة واحدة على هذا الجهاز):','');
+    if(k===null) return;
+    if(k.trim().length<16){ alert('المفتاح قصير جدًا.'); return; }
+    setDeviceKey(k.trim()); needsKey=false;
+    if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad();
+  });
+  $('startupOffline').addEventListener('click', async ()=>{
+    hideStartupState();
+    await seedDefault(true); // local-only: baseline-stamped, so a later reconnect merges (not overwrites)
+    if(loadingEl) loadingEl.classList.add('hidden');
+    render();
+  });
 
   const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
   if(init.state) setState(init.state);
@@ -1964,27 +2120,13 @@
     if(loadingEl) loadingEl.classList.add('hidden');
     render();
     syncNow();
-  } else if(getDeviceKey()){
-    // new device WITH a key: pull the cloud copy; only if the cloud is also empty do we seed defaults
-    await syncNow();
-    if(enrichedIsEmpty()) await seedDefault();
-    if(loadingEl) loadingEl.classList.add('hidden');
-    applyPrefs();
-    render();
   } else {
-    // brand-new device, no key yet: seed the schedule locally so it's usable; it syncs once the key is entered
-    if(enrichedIsEmpty()) await seedDefault();
-    if(loadingEl) loadingEl.classList.add('hidden');
-    applyPrefs();
+    // no local data: show nothing (not the default schedule) behind the overlay until we know the truth
+    setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: prefs, tplArchive: { since: EPOCH_KEY, versions: [] } });
     render();
-    needsKey = true; syncState = 'need-key';
+    await runFirstLoad();
   }
   updateSyncBadge();
-  // First launch of the v2 client on an existing device: offer the key entry once so sync can start.
-  if(syncState === 'need-key' && !sessionStorage.getItem('ayyam_key_prompted')){
-    try{ sessionStorage.setItem('ayyam_key_prompted','1'); }catch(e){}
-    setTimeout(promptForKey, 400);
-  }
   autoRefreshLocation();
 })();
 </script>
