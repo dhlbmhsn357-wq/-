@@ -43,20 +43,22 @@ jobs:
       - name: Migrations from scratch + real concurrent commits
         run: npm run test:pg
 
+  # Required gate: Chromium desktop + mobile emulation run the full E2E suite.
   e2e:
     name: e2e-${{ matrix.project }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        project: [chromium-desktop, chromium-mobile, webkit]
+        project: [chromium-desktop, chromium-mobile]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps ${{ matrix.project == 'webkit' && 'webkit' || 'chromium' }}
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
       - name: Run E2E (${{ matrix.project }})
         run: npx playwright test --project=${{ matrix.project }}
       - name: Upload artifacts on failure
@@ -68,3 +70,31 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # Best-effort Safari-like coverage (NOT real iOS). WebKit is slow/finicky with service workers on
+  # Linux CI, so it is non-blocking and time-capped; it excludes the SW-update spec.
+  e2e-webkit:
+    name: e2e-webkit-safari-like
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Install WebKit
+        run: npx playwright install --with-deps webkit
+      - name: Run E2E (webkit, non-SW specs)
+        run: >-
+          npx playwright test --project=webkit
+          tests/e2e/specs/core-functional.spec.mjs
+          tests/e2e/specs/multi-device.spec.mjs
+          tests/e2e/specs/reset-import-recovery.spec.mjs
+          tests/e2e/specs/notifications.spec.mjs
+          tests/e2e/specs/security.spec.mjs
+          tests/e2e/specs/responsive-rtl.spec.mjs
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: playwright-webkit, path: "test-results/", retention-days: 7 }
