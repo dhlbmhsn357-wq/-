@@ -17,7 +17,6 @@ import webpush from 'npm:web-push@3.6.7';
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
 import * as adhan from 'npm:adhan@4.4.3';
 import { runCron, runTest, CFG } from './orchestrate.js';
-import { fcmSend, getAccessToken } from './fcm.js';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -42,29 +41,9 @@ Deno.serve(async (req) => {
       JSON.stringify({ title: item.title, body: item.body, tag: item.tag, icon: 'icon-192.png' }), { TTL: CFG.TTL_SECONDS })
       .then(() => undefined, (e) => { throw pushError(e); });
 
-  // Android FCM (optional): activated only when the backend secret FCM_SERVICE_ACCOUNT is set.
-  // The service-account private key is a backend secret — never in the APK/repo/JS/Gradle.
-  let sendFcm: ((item: any) => Promise<void>) | undefined;
-  const saRaw = env('FCM_SERVICE_ACCOUNT');
-  if (saRaw) {
-    try {
-      const sa = JSON.parse(saRaw);
-      const projectId = env('FCM_PROJECT_ID') || sa.project_id;
-      let cache: { token: string; exp: number } | null = null;
-      const accessToken = async () => {
-        const nowS = Math.floor(Date.now() / 1000);
-        if (cache && cache.exp - 60 > nowS) return cache.token;
-        const t = await getAccessToken(sa);
-        cache = { token: t, exp: nowS + 3300 };
-        return t;
-      };
-      sendFcm = async (item: any) => { await fcmSend(item, { accessToken: await accessToken(), projectId }); };
-    } catch (_) { /* misconfigured FCM secret → web push still works, fcm deferred */ }
-  }
-
   try {
     if (isTest) return json(await runTest(sb, sendPush));
-    const result = await runCron(sb, adhan, sendPush, now, sendFcm);
+    const result = await runCron(sb, adhan, sendPush, now);
     if (now.getUTCHours() === 3 && now.getUTCMinutes() < 5) await sb.rpc('push_cleanup'); // once a day
     return json(result);
   } catch (e) {
