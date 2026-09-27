@@ -110,6 +110,30 @@
       try { return await WB.getStatus(); } catch (e) { return null; }
     },
     secureState() { return { backing: _backing, degraded: _degraded }; },
+    // ---- Local (on-device) reminders: JS builds the plan, native schedules inexact alarms ----
+    notifConfigured() { return isNativeAndroid() && !!plugin('NotifBridge'); },
+    async setNotifPlan(plan) {
+      if (!isNativeAndroid()) return { skipped: true };
+      const NB = plugin('NotifBridge'); if (!NB) return { skipped: true };
+      try { return await NB.setPlan({ plan }); } catch (e) { return { error: true }; }
+    },
+    async clearNotif() {
+      const NB = plugin('NotifBridge'); if (!isNativeAndroid() || !NB) return { skipped: true };
+      try { await NB.clear(); return { ok: true }; } catch (e) { return { error: true }; }
+    },
+    async notifStatus() {
+      if (!isNativeAndroid()) return null;
+      const NB = plugin('NotifBridge'); if (!NB) return null;
+      try { return await NB.getStatus(); } catch (e) { return null; }
+    },
+    async checkNotifPermission() {
+      const NB = plugin('NotifBridge'); if (!isNativeAndroid() || !NB) return { permission: 'unsupported' };
+      try { return await NB.checkPermission(); } catch (e) { return { permission: 'unknown' }; }
+    },
+    async requestNotifPermission() {
+      const NB = plugin('NotifBridge'); if (!isNativeAndroid() || !NB) return { permission: 'unsupported' };
+      try { return await NB.requestPermission(); } catch (e) { return { permission: 'unknown' }; }
+    },
   };
   global.AyyamNative = AyyamNative;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

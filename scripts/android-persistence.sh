@@ -39,6 +39,9 @@ runtest 'com.ayyam.app.BackAndDeepLinkTest'
 echo "### 0d) F1: Web Push capability probe inside the WebView"
 runtest 'com.ayyam.app.WebPushProbeTest'
 
+echo "### 0e) Local notifications: receiver stale-guard + store validation"
+runtest 'com.ayyam.app.NotifReceiverTest'
+
 echo "### 1) fresh write (local-asset load + IDB + Keystore + widget snapshot)"
 runtest 'com.ayyam.app.ShellPersistenceTest#writeMarker'
 runtest 'com.ayyam.app.SecureStoreTest#writeKey'

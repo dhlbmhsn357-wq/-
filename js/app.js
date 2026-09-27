@@ -339,6 +339,7 @@
     if(!$('settingsView').classList.contains('hidden')){ renderTplDays(); renderTplTasks(); }
     if(!$('reportsView').classList.contains('hidden')) renderReports();
     scheduleWidgetPush(); // adopt/merge/pull/reset changed today's data → refresh widget snapshot
+    scheduleNotifPlan();
   }
 
   // ---------- device key (per device, entered once; never shown/logged/committed) ----------
@@ -625,6 +626,20 @@
     }catch(e){ if(store) store.logDiag({ type:'widget-build-fail' }); }
   }
   function scheduleWidgetPush(){ if(!NATIVE) return; clearTimeout(widgetTimer); widgetTimer = setTimeout(pushWidgetSnapshotNow, 500); }
+
+  // ---------- native local notifications (Android only; no server) ----------
+  // Build the reminder PLAN from the current local state (prayer times + open tasks) and hand it to
+  // the native scheduler. Runs AFTER the durable save, debounced, failure-isolated: a scheduling
+  // failure only logs a diagnostic and never blocks a task edit. Native fires with a stale-date guard.
+  let notifTimer = null;
+  function pushNotifPlanNow(){
+    if(!NATIVE || typeof AyyamNotif==='undefined' || !(AyyamNative.notifConfigured && AyyamNative.notifConfigured())) return;
+    try{
+      const plan = AyyamNotif.buildPlan(currentBundle(), { now: Date.now(), days: 3 });
+      AyyamNative.setNotifPlan(plan).then(r=>{ if(store && r && !r.ok && !r.skipped) store.logDiag({ type:'notif-plan-fail' }); }).catch(()=>{});
+    }catch(e){ if(store) store.logDiag({ type:'notif-plan-build-fail' }); }
+  }
+  function scheduleNotifPlan(){ if(!NATIVE) return; clearTimeout(notifTimer); notifTimer = setTimeout(pushNotifPlanNow, 600); }
   // Native-only settings row: hide task names in the widget. When on, titles/times are omitted from
   // the native snapshot entirely (never stored), and the widget shows a remaining-count message.
   function setupWidgetPrivacyToggle(){
@@ -672,6 +687,17 @@
       AyyamNative.exitApp();                                                        // 4. nothing → exit
     }catch(e){ try{ AyyamNative.exitApp(); }catch(_){} }
   }
+  // Native Android reminders: user-initiated (🔔). Request POST_NOTIFICATIONS (13+) then schedule the
+  // plan. Purely local — no server, no token. No-op on web.
+  async function enableLocalNotifs(){
+    try{
+      const r = await AyyamNative.requestNotifPermission();
+      if(!r || r.permission!=='granted'){ alert('لتصلك تذكيرات مهامك مع كل صلاة، فعّل إذن الإشعارات من إعدادات التطبيق ثم اضغط 🔔 مرة أخرى.'); return; }
+      pushNotifPlanNow(); // schedule now that notifications can be shown
+      const b=$('notifyBtn'); if(b){ b.textContent='🔔✓'; b.setAttribute('aria-label','التذكيرات مفعّلة'); }
+      if(store) store.logDiag({ type:'local-notifs-enabled' });
+    }catch(e){ alert('تعذّر تفعيل التذكيرات. حاول لاحقًا.'); }
+  }
 
   function toArabicNum(n){
     const map = {'0':'٠','1':'١','2':'٢','3':'٣','4':'٤','5':'٥','6':'٦','7':'٧','8':'٨','9':'٩'};
@@ -702,6 +728,7 @@
     renderMissingBanner();
     renderGroups();
     scheduleWidgetPush(); // native-only; refresh the widget's TODAY snapshot after any visible change
+    scheduleNotifPlan();  // native-only; re-plan local reminders when today's tasks change
   }
 
   function renderMissingBanner(){
@@ -1116,6 +1143,11 @@
           if(ws.generatedAt) nativeLines.push('تحديث لقطة الودجت: ' + relTime(Date.parse(ws.generatedAt)));
         }
         nativeLines.push('خصوصية الودجت: ' + (widgetPrivacy() ? 'مفعّلة (إخفاء الأسماء)' : 'غير مفعّلة'));
+        const ns = await AyyamNative.notifStatus();
+        if(ns){
+          nativeLines.push('التذكيرات المحلية: ' + (ns.permission==='granted' ? 'مفعّلة' : 'غير مفعّلة') + (typeof ns.count==='number' ? ' · مجدولة ' + toArabicNum(ns.count) : ''));
+          if(ns.generatedAt) nativeLines.push('آخر جدولة تذكيرات: ' + relTime(Date.parse(ns.generatedAt)));
+        }
       }catch(e){}
     }
     return [
@@ -1630,6 +1662,15 @@
     }
 
     async function setupNotifyButton(){
+      // Native Android: Web Push is unavailable in the WebView → the 🔔 enables LOCAL reminders (FCM-free).
+      if(NATIVE){
+        if(AyyamNative.notifConfigured && AyyamNative.notifConfigured()){
+          $('notifyBtn').classList.remove('hidden');
+          try{ const st = await AyyamNative.checkNotifPermission(); if(st && st.permission==='granted'){ $('notifyBtn').textContent='🔔✓'; $('notifyBtn').setAttribute('aria-label','التذكيرات مفعّلة'); } }catch(e){}
+          $('notifyBtn').addEventListener('click', enableLocalNotifs);
+        }
+        return;
+      }
       if(!(await isPushSupported())) return; // keep hidden if unsupported
       $('notifyBtn').classList.remove('hidden');
       const existing = await getExistingPushSubscription();
@@ -1741,7 +1782,7 @@
   });
 
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
-  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); }); }catch(e){} }
+  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); }); }catch(e){} }
 
   const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
   if(init.state) setState(init.state);
@@ -1760,6 +1801,7 @@
   updateSyncBadge();
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
+  scheduleNotifPlan();  // seed the local reminder plan
   if(NATIVE){
     try{ AyyamNative.onDeepLink(handleDeepLink); const lu = await AyyamNative.getLaunchUrl(); if(lu) handleDeepLink(lu); }catch(e){}
     try{ AyyamNative.onBack(handleBack); }catch(e){}

@@ -15,8 +15,8 @@ const FILES = ['index.html', 'manifest.webmanifest', 'sw.js',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'bg.jpg'];
 const DIRS = ['css', 'js'];
 // Native-only modules, copied from native-web/ into www/js and injected into index.html (before app.js).
-// widget-model.js must load before native.js/app.js so AyyamWidget exists when app.js builds snapshots.
-const NATIVE_JS = ['widget-model.js', 'native.js'];
+// Order matters: adhan (sets globalThis.adhan) → notif-plan/widget-model → native → app.js.
+const NATIVE_JS = ['adhan.umd.min.js', 'widget-model.js', 'notif-plan.js', 'native.js'];
 
 rmSync(WWW, { recursive: true, force: true });
 mkdirSync(join(WWW, 'js'), { recursive: true });

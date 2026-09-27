@@ -43,9 +43,11 @@ public class WebPushProbeTest {
                     + "});})()");
             System.out.println("WEBPUSH_PROBE " + caps);
             assertNotNull(caps);
-            // Decisive: the Push API is NOT available in the Android WebView → Web Push cannot work here,
-            // so the native channel must be FCM. (If this ever fails, PushManager appeared — revisit.)
-            assertTrue("Android WebView unexpectedly exposes PushManager: " + caps, caps.contains("\"pushManager\":false"));
+            String c = caps.replace("\\", ""); // evaluateJavascript double-escapes the JSON string
+            // Decisive: neither the Push API nor the Notification API exists in the Android WebView, so
+            // Web Push cannot work here → Android uses NATIVE LOCAL NOTIFICATIONS (no server, no FCM).
+            assertTrue("Android WebView unexpectedly exposes PushManager: " + caps, c.contains("\"pushManager\":false"));
+            assertTrue("Android WebView unexpectedly exposes Notification: " + caps, c.contains("\"notification\":false"));
         }
     }
 }
