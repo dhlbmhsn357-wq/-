@@ -38,6 +38,8 @@ dependencies {
     implementation project(':capacitor-android')
     implementation "androidx.security:security-crypto:$androidxSecurityCryptoVersion"
     testImplementation "junit:junit:$junitVersion"
+    // Android's org.json is stubbed in JVM unit tests; use a real impl so WidgetRenderModel parses JSON.
+    testImplementation "org.json:json:20240303"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
