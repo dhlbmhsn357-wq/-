@@ -13,10 +13,18 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Ayyam dark identity for the system bars; light icons on the dark bar. -->
+        <item name="android:statusBarColor">#12161C</item>
+        <item name="android:navigationBarColor">#12161C</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <!-- Android 12+ splash: Ayyam mark on the app's dark background, no artificial delay. -->
+        <item name="windowSplashScreenBackground">#12161C</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
         <item name="android:background">@drawable/splash</item>
     </style>
 </resources>

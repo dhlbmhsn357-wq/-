@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Backup + device-transfer rules (API 31+). Exclude the Keystore-backed secure store (device key)
-     from both cloud backup and device-to-device transfer. The Keystore master key never leaves the
-     device, so even an accidental copy would be undecryptable — this makes the exclusion explicit. -->
+<!-- Backup + device-transfer rules (API 31+). Exclude the device-key stores (Keystore secure store +
+     the Preferences fallback) and the widget snapshot (may hold task names when privacy is off) from
+     both cloud backup and device-to-device transfer. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="ayyam_secure_store.xml" />
+        <exclude domain="sharedpref" path="CapacitorStorage.xml" />
+        <exclude domain="sharedpref" path="ayyam_widget.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="ayyam_secure_store.xml" />
+        <exclude domain="sharedpref" path="CapacitorStorage.xml" />
+        <exclude domain="sharedpref" path="ayyam_widget.xml" />
     </device-transfer>
 </data-extraction-rules>

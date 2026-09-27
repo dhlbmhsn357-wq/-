@@ -84,6 +84,32 @@
         try { App.addListener('appUrlOpen', (e) => { if (e && e.url) fn(e.url); }); } catch (_) {}
       }
     },
+    // Hardware/system Back. The handler decides what to close; only exits when nothing is left.
+    onBack(fn) {
+      if (!isNativeAndroid() || typeof fn !== 'function') return;
+      const App = plugin('App');
+      if (App && App.addListener) {
+        try { App.addListener('backButton', () => fn()); } catch (_) {}
+      }
+    },
+    exitApp() {
+      const App = plugin('App');
+      try { if (App && App.exitApp) App.exitApp(); } catch (_) {}
+    },
+    // Non-sensitive native info for diagnostics.
+    async appInfo() {
+      if (!isNativeAndroid()) return null;
+      const App = plugin('App');
+      if (!App || !App.getInfo) return null;
+      try { const i = await App.getInfo(); return { version: i && i.version, build: i && i.build }; } catch (e) { return null; }
+    },
+    async widgetStatus() {
+      if (!isNativeAndroid()) return null;
+      const WB = plugin('WidgetBridge');
+      if (!WB || !WB.getStatus) return null;
+      try { return await WB.getStatus(); } catch (e) { return null; }
+    },
+    secureState() { return { backing: _backing, degraded: _degraded }; },
   };
   global.AyyamNative = AyyamNative;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

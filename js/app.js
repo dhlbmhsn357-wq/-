@@ -346,7 +346,17 @@
   // On native Android the key lives in Android Keystore-backed secure storage (hydrated into memory at
   // startup so these stay synchronous). On web it stays in localStorage exactly as before.
   function getDeviceKey(){ if(NATIVE) return AyyamNative.getKeyCached(); try{ return localStorage.getItem(LS_DEVICE_KEY) || ''; }catch(e){ return ''; } }
-  function setDeviceKey(k){ if(NATIVE){ try{ AyyamNative.setKey(k); }catch(e){} return; } try{ k ? localStorage.setItem(LS_DEVICE_KEY, k) : localStorage.removeItem(LS_DEVICE_KEY); }catch(e){} }
+  let secureWarned = false;
+  function setDeviceKey(k){
+    if(NATIVE){
+      try{ AyyamNative.setKey(k).then(r=>{
+        if(store) store.logDiag({ type:'secure-set', backing:(r&&r.backing)||'?', degraded:!!(r&&r.degraded) }); // no key value, ever
+        if(r && r.degraded && !secureWarned){ secureWarned = true; alert('تعذّر حفظ مفتاح المزامنة في التخزين الآمن على هذا الجهاز؛ سيُحفظ محليًا. قد تحتاج إعادة إدخاله لاحقًا.'); }
+      }).catch(()=>{}); }catch(e){}
+      return;
+    }
+    try{ k ? localStorage.setItem(LS_DEVICE_KEY, k) : localStorage.removeItem(LS_DEVICE_KEY); }catch(e){}
+  }
   let needsKey = false; // true when the server rejected our key (or none set) and we have changes to sync
   // Entered once per device, kept only in this device's localStorage. Never shown elsewhere or logged.
   function promptForKey(){
@@ -615,6 +625,18 @@
     }catch(e){ if(store) store.logDiag({ type:'widget-build-fail' }); }
   }
   function scheduleWidgetPush(){ if(!NATIVE) return; clearTimeout(widgetTimer); widgetTimer = setTimeout(pushWidgetSnapshotNow, 500); }
+  // Native-only settings row: hide task names in the widget. When on, titles/times are omitted from
+  // the native snapshot entirely (never stored), and the widget shows a remaining-count message.
+  function setupWidgetPrivacyToggle(){
+    const row = $('widgetPrivacyRow'), cb = $('widgetPrivacyToggle');
+    if(!row || !cb) return;
+    row.classList.remove('hidden');
+    cb.checked = widgetPrivacy();
+    cb.addEventListener('change', ()=>{
+      try{ localStorage.setItem('ayyam_widget_privacy_v1', cb.checked ? '1' : '0'); }catch(e){}
+      pushWidgetSnapshotNow(); // rebuild immediately so stored snapshot reflects the new privacy state
+    });
+  }
 
   // Deep link from the widget: only ayyam://today[?task=<id>] is honored (no arbitrary URLs).
   function focusTask(id){
@@ -639,6 +661,16 @@
       const taskId = u.searchParams.get('task');
       if(taskId) setTimeout(()=>focusTask(taskId), 150);
     }catch(e){}
+  }
+  // Android hardware/system Back: close the top-most thing; exit only when nothing is left to close.
+  function handleBack(){
+    try{
+      const add = $('addOverlay');
+      if(add && add.classList.contains('show')){ closeAddSheet(); return; }        // 1. open sheet
+      if($('settingsView') && !$('settingsView').classList.contains('hidden')){ closeSettings(); return; } // 2. settings
+      if($('reportsView') && !$('reportsView').classList.contains('hidden')){ closeReports(); return; }     // 3. reports
+      AyyamNative.exitApp();                                                        // 4. nothing → exit
+    }catch(e){ try{ AyyamNative.exitApp(); }catch(_){} }
   }
 
   function toArabicNum(n){
@@ -1068,6 +1100,24 @@
     let outbox = isPending() ? 1 : 0, recovery = 0, schema = null;
     try{ if(store){ outbox = (await store.listOutbox()).length; recovery = (await store.getRecovery()).length; schema = store.schemaVersion; } }catch(e){}
     const localOnly = (function(){ try{ return localStorage.getItem('ayyam_local_only_v1')==='1'; }catch(e){ return false; } })();
+    // Native-only, non-sensitive extras (Platform/version/secure state/widget state). No secrets, no titles.
+    const nativeLines = [];
+    if(NATIVE){
+      try{
+        nativeLines.push('المنصة: أندرويد');
+        const info = await AyyamNative.appInfo();
+        if(info) nativeLines.push('إصدار تطبيق أندرويد: ' + (info.version||'—') + (info.build!=null ? ' ('+info.build+')' : ''));
+        const ss = AyyamNative.secureState ? AyyamNative.secureState() : null;
+        if(ss) nativeLines.push('التخزين الآمن: ' + (ss.degraded ? 'محدود (fallback)' : 'آمن') + (ss.backing ? ' — '+ss.backing : ''));
+        const ws = await AyyamNative.widgetStatus();
+        if(ws){
+          nativeLines.push('جسر الودجت: ' + (ws.hasSnapshot ? 'نشط' : 'بلا لقطة'));
+          if(ws.date) nativeLines.push('تاريخ لقطة الودجت: ' + ws.date);
+          if(ws.generatedAt) nativeLines.push('تحديث لقطة الودجت: ' + relTime(Date.parse(ws.generatedAt)));
+        }
+        nativeLines.push('خصوصية الودجت: ' + (widgetPrivacy() ? 'مفعّلة (إخفاء الأسماء)' : 'غير مفعّلة'));
+      }catch(e){}
+    }
     return [
       'إصدار التطبيق: ' + APP_VERSION,
       'عامل الخدمة: ' + sw,
@@ -1084,7 +1134,7 @@
       'التخزين المحلي: ' + (storageDegraded ? 'محدود (بدون قاعدة بيانات)' : (store && store.newerSchema ? 'إصدار أحدث — يُنصح بتحديث التطبيق' : 'سليم')),
       'الوضع المحلي فقط: ' + (localOnly ? 'نعم' : 'لا'),
       'معرّف الجهاز: ' + (DEVICE_ID ? DEVICE_ID.slice(0,8) : '—'),
-    ];
+    ].concat(nativeLines);
   }
   async function updateDiagInfo(){
     const el = $('diagInfo'); if(!el) return;
@@ -1710,6 +1760,10 @@
   updateSyncBadge();
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
-  if(NATIVE){ try{ AyyamNative.onDeepLink(handleDeepLink); const lu = await AyyamNative.getLaunchUrl(); if(lu) handleDeepLink(lu); }catch(e){} }
+  if(NATIVE){
+    try{ AyyamNative.onDeepLink(handleDeepLink); const lu = await AyyamNative.getLaunchUrl(); if(lu) handleDeepLink(lu); }catch(e){}
+    try{ AyyamNative.onBack(handleBack); }catch(e){}
+    try{ setupWidgetPrivacyToggle(); }catch(e){}
+  }
   autoRefreshLocation();
 })();
