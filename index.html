@@ -1882,19 +1882,25 @@
         });
       }
       const json = sub.toJSON();
-      // supabase-js reports failures in the returned `error` (it doesn't throw), so check it explicitly;
-      // only show the "enabled" state once the server actually has this subscription.
-      let saved = false;
+      // Register through the device-key-protected RPC (register_push): a real upsert on the endpoint,
+      // no direct table access from the browser. Needs the sync key — the same one used for data sync.
+      const key = getDeviceKey();
+      if(!key){
+        alert('لتفعيل الإشعارات أدخل مفتاح المزامنة أولًا (من إعدادات المزامنة).');
+        promptForKey();
+        return;
+      }
+      let saved = false, unauthorized = false;
       if(sb){
         try{
-          const { error } = await withTimeout(sb.from('push_subscriptions').insert({
-            endpoint: json.endpoint,
-            p256dh: json.keys.p256dh,
-            auth: json.keys.auth
+          const { data, error } = await withTimeout(sb.rpc('register_push', {
+            p_key: key, p_endpoint: json.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth,
           }), SYNC_TIMEOUT_MS);
-          saved = !error || error.code === '23505'; // 23505 = endpoint already registered
+          if(!error && data && data.status === 'ok') saved = true;
+          else if(data && data.status === 'unauthorized') unauthorized = true;
         }catch(e){ saved = false; }
       }
+      if(unauthorized){ alert('مفتاح المزامنة غير صحيح. أعد إدخاله ثم فعّل الإشعارات.'); setDeviceKey(''); promptForKey(); return; }
       if(!saved){
         alert('تعذّر تسجيل الإشعارات على الخادم. تأكد من الاتصال وحاول مرة أخرى.');
         return;
