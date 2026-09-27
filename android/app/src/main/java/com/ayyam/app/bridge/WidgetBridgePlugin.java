@@ -39,7 +39,13 @@ public class WidgetBridgePlugin extends Plugin {
 
     @PluginMethod
     public void getStatus(PluginCall call) {
-        JSObject ret = JSObject.fromJSONObject(WidgetSnapshotStore.status(getContext()));
+        JSObject ret;
+        try {
+            ret = JSObject.fromJSONObject(WidgetSnapshotStore.status(getContext()));
+        } catch (Exception e) {
+            ret = new JSObject();
+            ret.put("hasSnapshot", false);
+        }
         call.resolve(ret);
     }
 }
