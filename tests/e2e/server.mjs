@@ -52,12 +52,18 @@ let outage = null;      // null | 'down' (503) | 'hang'
 let swVersion = null;   // when set, sw.js is served with SW_VERSION overridden (to test updates)
 let swBreak = false;    // when true, sw.js precache references a missing asset (to test failed install)
 
-function send(res, code, body, type = 'application/json') {
+function send(res, code, body, type = 'application/json', extra = {}) {
   res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' });
+    'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', ...extra });
   if (Buffer.isBuffer(body) || typeof body === 'string') res.end(body);
   else res.end(JSON.stringify(body));
 }
+
+// Phase 7: serve the app under the SAME CSP as production (parsed from vercel.json) so E2E catches
+// real policy violations. upgrade-insecure-requests is stripped — it would break the http localhost harness.
+const PROD_CSP = JSON.parse(readFileSync(join(ROOT, 'vercel.json'), 'utf8'))
+  .headers.find((h) => h.source === '/(.*)').headers.find((h) => h.key === 'Content-Security-Policy').value;
+const E2E_CSP = PROD_CSP.split(';').map((s) => s.trim()).filter((s) => s && !/^upgrade-insecure-requests$/.test(s)).join('; ');
 const readBody = (req) => new Promise((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(b)); });
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript',
@@ -171,7 +177,8 @@ const server = http.createServer(async (req, res) => {
     if (swBreak) s = s.replace("'manifest.webmanifest',", "'manifest.webmanifest', 'missing-asset-xyz.js',");
     body = s;
   }
-  send(res, 200, body, MIME[extname(full)] || 'application/octet-stream');
+  send(res, 200, body, MIME[extname(full)] || 'application/octet-stream',
+    file === 'index.html' ? { 'Content-Security-Policy': E2E_CSP } : {});
 });
 
 await initDb();
