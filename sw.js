@@ -9,7 +9,7 @@
 // Never cached: Supabase (API / RPC / auth / personal sync data). Fonts/CDN use a bounded
 // stale-while-revalidate cache and never block the app.
 
-const SW_VERSION = '5.0.0';
+const SW_VERSION = '5.1.0';
 const APP_CACHE = `ayyam-app-${SW_VERSION}`;
 const RUNTIME_CACHE = `ayyam-runtime-${SW_VERSION}`;
 const RUNTIME_MAX = 60; // bounded so the runtime cache can't grow without limit
@@ -17,7 +17,8 @@ const RUNTIME_MAX = 60; // bounded so the runtime cache can't grow without limit
 // The coherent asset set for this version. install is atomic: all or nothing.
 const PRECACHE = [
   './', 'index.html',
-  'js/storage.js', 'js/sync-model.js',
+  'css/app.css',
+  'js/app.js', 'js/storage.js', 'js/sync-model.js',
   'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'bg.jpg',
 ];

@@ -13,13 +13,13 @@ const check = (name, code) => {
   }
 };
 
+// CSP hardening (Phase 7): the app has no inline <script> anymore — everything is external.
+// Guard that no inline script sneaks back in (would force script-src 'unsafe-inline').
 const html = readFileSync('index.html', 'utf8');
 const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
-if (!inline.length) { console.error('FAIL index.html: no inline <script> found'); failed++; }
-// the app script is an async IIFE with top-level awaits inside the function body — valid as a script
-inline.forEach((code, i) => check(`index.html <script #${i + 1}>`, code));
+if (inline.length) { console.error(`FAIL index.html: ${inline.length} inline <script> block(s) present — CSP requires external scripts only`); failed++; }
 check('sw.js', readFileSync('sw.js', 'utf8'));
-for (const f of ['js/storage.js','js/sync-model.js']) check(f, readFileSync(f, 'utf8'));
+for (const f of ['js/app.js','js/storage.js','js/sync-model.js']) check(f, readFileSync(f, 'utf8'));
 JSON.parse(readFileSync('manifest.webmanifest', 'utf8')); console.log('ok   manifest.webmanifest');
 
 process.exit(failed ? 1 : 0);
