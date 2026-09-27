@@ -21,8 +21,27 @@ export async function runTest(sb, sendPush) {
   return { mode: 'test', sent, gone };
 }
 
+// Route a claimed delivery to its channel's sender. sendFcm may be absent (FCM not configured yet);
+// then FCM deliveries fail retryably (503) and are simply retried later — never lost, never sent wrong.
+function makeSend(sendPush, sendFcm) {
+  return (item) => {
+    if (item.channel === 'fcm') {
+      if (!sendFcm) return Promise.reject(Object.assign(new Error('fcm-not-configured'), { statusCode: 503 }));
+      return sendFcm(item);
+    }
+    return sendPush(item);
+  };
+}
+// Disable the right target for a dead delivery, by channel.
+function makeDisable(sb) {
+  return (id, msg, channel) => channel === 'fcm'
+    ? sb.rpc('push_disable_android', { p_id: id, p_error: msg })
+    : sb.rpc('push_disable_subscription', { p_id: id, p_error: msg });
+}
+
 // Cron mode: enqueue due prayers (skip when no open tasks), then drain the delivery queue with leases.
-export async function runCron(sb, adhan, sendPush, now) {
+// sendFcm is optional (Android FCM channel); when omitted, only the Web Push channel is delivered.
+export async function runCron(sb, adhan, sendPush, now, sendFcm) {
   const { data: row } = await sb.from('ayyam_data').select('data').eq('id', 'main').maybeSingle();
   const data = materialize(row?.data ?? {}); // the row stores the enriched shape → materialize for the reminder logic
   const loc = locationFrom(data);
@@ -44,10 +63,10 @@ export async function runCron(sb, adhan, sendPush, now) {
     const { data: batch } = await sb.rpc('push_claim', { p_limit: CFG.CLAIM_LIMIT, p_lease_seconds: CFG.LEASE_SECONDS });
     if (!batch || batch.length === 0) break;
     const counts = await processBatch(batch, {
-      send: sendPush,
+      send: makeSend(sendPush, sendFcm),
       markSent: (id) => sb.rpc('push_mark_sent', { p_id: id }),
       markFailed: (id, msg, retryable) => sb.rpc('push_mark_failed', { p_id: id, p_error: msg, p_retryable: retryable, p_max_attempts: CFG.MAX_ATTEMPTS, p_base_seconds: CFG.BACKOFF_BASE }),
-      disable: (id, msg) => sb.rpc('push_disable_subscription', { p_id: id, p_error: msg }),
+      disable: makeDisable(sb),
     }, { concurrency: CFG.CONCURRENCY, maxAttempts: CFG.MAX_ATTEMPTS, backoffBase: CFG.BACKOFF_BASE });
     for (const k of Object.keys(totals)) totals[k] += counts[k];
   }
