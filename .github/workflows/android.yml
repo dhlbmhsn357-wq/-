@@ -19,7 +19,8 @@ jobs:
         with: { node-version: '20' }
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
-      - uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses (preinstalled SDK on runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
       - name: Install JS deps
         run: npm ci
       - name: Assemble web dir (native-only injection) + Capacitor sync
@@ -48,6 +49,8 @@ jobs:
         with: { node-version: '20' }
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
+      - name: Accept Android SDK licenses (preinstalled SDK on runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
       - name: Install JS deps + assemble web dir + sync
         run: |
           npm ci
