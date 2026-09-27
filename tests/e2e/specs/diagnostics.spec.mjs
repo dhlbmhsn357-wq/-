@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { prepare, resetBackend, DEVICE_KEY } from '../helpers.mjs';
+import { prepare, resetBackend, waitSWControls, DEVICE_KEY } from '../helpers.mjs';
 
 test.beforeEach(async ({ request }) => { await resetBackend(request); });
 
@@ -7,10 +7,13 @@ test('diagnostics shows the safe fields and NEVER a secret', async ({ page }) =>
   await prepare(page, { key: true });
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
+  await waitSWControls(page); // so the SW version can be queried
 
   await page.locator('#openSettings').click();
   const diag = page.locator('#diagInfo');
   await expect(diag).toContainText('إصدار التطبيق');
+  // the SW must actually answer GET_VERSION (regression guard: reply on the MessageChannel port)
+  await expect(diag).toContainText(/عامل الخدمة: \d+\.\d+\.\d+/);
   const text = await diag.textContent();
 
   // required non-sensitive fields

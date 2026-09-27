@@ -9,7 +9,7 @@
 // Never cached: Supabase (API / RPC / auth / personal sync data). Fonts/CDN use a bounded
 // stale-while-revalidate cache and never block the app.
 
-const SW_VERSION = '5.1.0';
+const SW_VERSION = '5.1.1';
 const APP_CACHE = `ayyam-app-${SW_VERSION}`;
 const RUNTIME_CACHE = `ayyam-runtime-${SW_VERSION}`;
 const RUNTIME_MAX = 60; // bounded so the runtime cache can't grow without limit
@@ -44,7 +44,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('message', (event) => {
   const data = event.data || {};
   if (data.type === 'SKIP_WAITING') self.skipWaiting();
-  if (data.type === 'GET_VERSION' && event.source) event.source.postMessage({ type: 'VERSION', version: SW_VERSION });
+  if (data.type === 'GET_VERSION') {
+    const reply = { type: 'VERSION', version: SW_VERSION };
+    // The app asks via a MessageChannel port; reply on that port. Fall back to the client (event.source)
+    // for callers that post without a port.
+    if (event.ports && event.ports[0]) event.ports[0].postMessage(reply);
+    else if (event.source) event.source.postMessage(reply);
+  }
 });
 
 async function trimCache(name, max) {
