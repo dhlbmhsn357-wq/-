@@ -297,3 +297,7 @@
     font-family:'Cairo',sans-serif;font-size:13px;padding:10px 14px;border-radius:14px;
     box-shadow:0 8px 24px rgba(0,0,0,0.4);
   }
+
+/* Deep-link focus highlight (used only in the native widget flow; harmless on web) */
+.task.flash{ animation: ayyam-flash 2s ease; }
+@keyframes ayyam-flash{ 0%,100%{ background:transparent; } 20%{ background:rgba(232,184,75,0.22); } }

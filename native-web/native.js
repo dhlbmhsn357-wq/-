@@ -70,6 +70,20 @@
       try { const r = await WB.updateSnapshot({ snapshot }); return { ok: !!(r && r.ok) }; }
       catch (e) { return { ok: false, error: true }; }
     },
+    // Deep links (ayyam://today[?task=<id>]) from the widget.
+    async getLaunchUrl() {
+      if (!isNativeAndroid()) return null;
+      const App = plugin('App');
+      if (!App || !App.getLaunchUrl) return null;
+      try { const r = await App.getLaunchUrl(); return (r && r.url) || null; } catch (e) { return null; }
+    },
+    onDeepLink(fn) {
+      if (!isNativeAndroid() || typeof fn !== 'function') return;
+      const App = plugin('App');
+      if (App && App.addListener) {
+        try { App.addListener('appUrlOpen', (e) => { if (e && e.url) fn(e.url); }); } catch (_) {}
+      }
+    },
   };
   global.AyyamNative = AyyamNative;
 })(typeof globalThis !== 'undefined' ? globalThis : window);

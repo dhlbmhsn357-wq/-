@@ -616,6 +616,31 @@
   }
   function scheduleWidgetPush(){ if(!NATIVE) return; clearTimeout(widgetTimer); widgetTimer = setTimeout(pushWidgetSnapshotNow, 500); }
 
+  // Deep link from the widget: only ayyam://today[?task=<id>] is honored (no arbitrary URLs).
+  function focusTask(id){
+    try{
+      const el = document.querySelector('.task[data-task-id="'+ (window.CSS && CSS.escape ? CSS.escape(id) : id) +'"]');
+      if(!el) return; // task no longer exists → just stay on Today (no crash)
+      el.scrollIntoView({ behavior:'smooth', block:'center' });
+      el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'), 2000);
+    }catch(e){}
+  }
+  function handleDeepLink(url){
+    try{
+      if(typeof url!=='string' || url.indexOf('ayyam://')!==0) return; // validate scheme
+      const u = new URL(url);
+      if(u.hostname !== 'today') return;                                // only the Today host
+      selectedDate = new Date();
+      if($('settingsView') && !$('settingsView').classList.contains('hidden')) closeSettings();
+      if($('reportsView') && !$('reportsView').classList.contains('hidden')) closeReports();
+      hideStartupState();
+      if(loadingEl) loadingEl.classList.add('hidden');
+      render();
+      const taskId = u.searchParams.get('task');
+      if(taskId) setTimeout(()=>focusTask(taskId), 150);
+    }catch(e){}
+  }
+
   function toArabicNum(n){
     const map = {'0':'٠','1':'١','2':'٢','3':'٣','4':'٤','5':'٥','6':'٦','7':'٧','8':'٨','9':'٩'};
     return String(n).replace(/[0-9]/g, d=>map[d]);
@@ -802,6 +827,7 @@
   function taskRow(t){
     const row = document.createElement('div');
     row.className = 'task' + (t.done?' done':'');
+    if(t.id) row.dataset.taskId = t.id; // deep-link focus target (harmless on web)
     const check = document.createElement('button');
     check.className = 'check' + (t.done?' checked':'');
     check.textContent = t.done ? '✓' : '';
@@ -1684,5 +1710,6 @@
   updateSyncBadge();
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
+  if(NATIVE){ try{ AyyamNative.onDeepLink(handleDeepLink); const lu = await AyyamNative.getLaunchUrl(); if(lu) handleDeepLink(lu); }catch(e){} }
   autoRefreshLocation();
 })();

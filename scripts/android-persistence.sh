@@ -30,6 +30,9 @@ adb install -r "$TESTAPK"
 echo "### 0) widget store validation (schema / last-known-good / rapid / no-secret)"
 runtest 'com.ayyam.app.WidgetStoreValidationTest'
 
+echo "### 0b) widget RemoteViews rendering (normal / stale / empty / all-done / no-snapshot)"
+runtest 'com.ayyam.app.WidgetRenderTest'
+
 echo "### 1) fresh write (local-asset load + IDB + Keystore + widget snapshot)"
 runtest 'com.ayyam.app.ShellPersistenceTest#writeMarker'
 runtest 'com.ayyam.app.SecureStoreTest#writeKey'

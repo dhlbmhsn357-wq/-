@@ -25,7 +25,28 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Deep links from the widget: ayyam://today[?task=<id>] -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ayyam" />
+            </intent-filter>
+
         </activity>
+
+        <!-- Home-screen widget (read-only) -->
+        <receiver
+            android:name=".widget.AyyamWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.ayyam.app.WIDGET_MIDNIGHT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/ayyam_widget_info" />
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
