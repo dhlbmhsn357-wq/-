@@ -15,6 +15,39 @@ const EPOCH_KEY = '0000-00-00';
 export const DEFAULT_LOCATION = { lat: 30.0444, lng: 31.2357, tz: 'Africa/Cairo' }; // Cairo
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const DAY_CODES = ['sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri'];
+
+// The client stores the CONFLICT-MODEL "enriched" shape ({v:2, reg, tomb, epoch}); the reminder logic
+// works on the "materialized" bundle. Convert enriched → materialized here (mirrors AyyamModel.materialize
+// in js/sync-model.js — keep the two in sync). A plain (v1/materialized) bundle passes through unchanged.
+export function isEnriched(data) { return isObj(data) && data.v === 2 && isObj(data.reg); }
+export function materialize(data) {
+  if (!isEnriched(data)) return data;
+  const live = (key) => { const r = data.reg[key], t = (data.tomb || {})[key];
+    if (t && (!r || t.t >= r.t)) return undefined; return r ? r.val : undefined; };
+  const mat = { template: Object.fromEntries(DAY_CODES.map((c) => [c, []])), logs: {}, prefs: {}, tplArchive: { since: '0000-00-00', versions: [] } };
+  const day = (d) => (mat.logs[d] || (mat.logs[d] = { done: {}, extra: [], hidden: {}, overrides: {} }));
+  const extras = {}, tpl = {};
+  for (const key of Object.keys(data.reg)) {
+    if (live(key) === undefined) continue;
+    const val = data.reg[key].val;
+    if (key.startsWith('p:')) { mat.prefs[key.slice(2)] = val; continue; }
+    if (key === 'arch') { mat.tplArchive = val; continue; }
+    const parts = key.split(':');
+    if (parts[0] === 'g') {
+      const [, d, kind, id] = parts; const L = day(d);
+      if (kind === 'done') { if (val === true) L.done[id] = true; }
+      else if (kind === 'hide') { if (val === true) L.hidden[id] = true; }
+      else if (kind === 'ovr') L.overrides[id] = { title: val.title, time: val.time || '', period: val.period || null };
+      else if (kind === 'ext') (extras[d] || (extras[d] = [])).push({ o: val.order || 0, t: { id, title: val.title, time: val.time || '', period: val.period || null } });
+    } else if (parts[0] === 'm') {
+      const [, dc, id] = parts; (tpl[dc] || (tpl[dc] = [])).push({ o: val.order || 0, t: { id, title: val.title, time: val.time || '', period: val.period || null } });
+    }
+  }
+  for (const d of Object.keys(extras)) day(d).extra = extras[d].sort((a, b) => a.o - b.o).map((x) => x.t);
+  for (const dc of DAY_CODES) if (tpl[dc]) mat.template[dc] = tpl[dc].sort((a, b) => a.o - b.o).map((x) => x.t);
+  return mat;
+}
 
 export function toArabicNum(n) {
   return String(n).replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[d]);

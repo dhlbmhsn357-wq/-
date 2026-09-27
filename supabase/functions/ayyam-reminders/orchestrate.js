@@ -1,6 +1,6 @@
 // Cron/test orchestration for the reminders function — single source of truth shared by index.ts
 // (real Supabase + web-push) and the Node integration test (PGlite-backed sb + a fake provider).
-import { localParts, locationFrom, tasksForDay, prayerTimes, duePeriods, buildMessage } from './logic.js';
+import { localParts, locationFrom, tasksForDay, prayerTimes, duePeriods, buildMessage, materialize } from './logic.js';
 import { processBatch } from './delivery.js';
 
 export const CFG = {
@@ -24,7 +24,7 @@ export async function runTest(sb, sendPush) {
 // Cron mode: enqueue due prayers (skip when no open tasks), then drain the delivery queue with leases.
 export async function runCron(sb, adhan, sendPush, now) {
   const { data: row } = await sb.from('ayyam_data').select('data').eq('id', 'main').maybeSingle();
-  const data = row?.data ?? {};
+  const data = materialize(row?.data ?? {}); // the row stores the enriched shape → materialize for the reminder logic
   const loc = locationFrom(data);
   const today = localParts(now, loc.tz);
   const times = prayerTimes(adhan, loc, today.y, today.m, today.d);

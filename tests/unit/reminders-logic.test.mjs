@@ -74,3 +74,20 @@ test('locationFrom validates the saved location', () => {
   assert.deepEqual(L.locationFrom({prefs:{location:{lat:'x', lng:1}}}), L.DEFAULT_LOCATION);
   assert.equal(L.locationFrom({prefs:{location:{lat:1, lng:1, tz:'Not/AZone'}}}).tz, 'Africa/Cairo');
 });
+
+test('materialize converts the enriched shape to the bundle the reminder logic reads', () => {
+  const enriched = { v: 2, epoch: 0, tomb: {},
+    reg: {
+      'm:sun:def-sun-0': { t: 1, by: '', val: { title: 'ورد', time: '', period: 'dhuhr', order: 0 } },
+      'g:2026-09-27:ext:x': { t: 5, by: 'A', val: { title: 'إضافية', time: '', period: 'asr', order: 0 } },
+      'g:2026-09-27:done:x': { t: 6, by: 'A', val: true },
+      'p:theme': { t: 1, by: '', val: 'day' },
+    } };
+  const m = L.materialize(enriched);
+  assert.equal(m.template.sun[0].title, 'ورد');
+  assert.equal(m.logs['2026-09-27'].extra[0].title, 'إضافية');
+  assert.equal(m.logs['2026-09-27'].done.x, true);
+  assert.equal(m.prefs.theme, 'day');
+  // a plain (materialized) bundle passes through unchanged
+  assert.equal(L.materialize({ template: {}, logs: {} }).template !== undefined, true);
+});

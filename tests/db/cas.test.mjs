@@ -150,3 +150,14 @@ test('retention: at most 50 recent snapshots, but pre-reset snapshots are always
   assert.ok(snaps.length <= 51, `kept ${snaps.length}`);
   assert.ok(snaps.some((s) => s.reason === 'before:reset'), 'pre-reset snapshot must survive pruning');
 });
+
+test('commit accepts the v2 enriched shape (reg/tomb/epoch), not only materialized', async () => {
+  const db = await freshDb();
+  await setKey(db);
+  const enriched = { v: 2, epoch: 0, reg: { 'g:2026-09-10:ext:t': { val: { title: 'x', time: '', period: null }, t: 5, by: 'A' } }, tomb: {} };
+  const r = await rpc.commit(db, { expected: 0, data: enriched, reason: 'init' });
+  assert.equal(r.status, 'ok');
+  assert.deepEqual((await rpc.pull(db)).data, enriched);
+  // a plain object with neither reg nor template+logs is still rejected
+  assert.equal((await rpc.commit(db, { expected: 1, data: { foo: 1 } })).status, 'invalid');
+});

@@ -675,10 +675,10 @@
   function lsMirrorEnriched(en){ try{ localStorage.setItem(LS_ENRICHED, JSON.stringify(en)); }catch(e){} }
 
   // Persist a user edit atomically (state + one pending op with a fresh op_id). Throws if not durable.
-  async function persistEnrichedEdit(en){
+  async function persistEnrichedEdit(en, reason){
     const opId = (self.crypto&&crypto.randomUUID)?crypto.randomUUID():'op'+Date.now()+Math.random();
     if(store){
-      await store.saveEdit(en, opId, { reason:'sync', base_revision: baseRevision });
+      await store.saveEdit(en, opId, { reason: reason || 'sync', base_revision: baseRevision });
       lsMirrorEnriched(en);
       return opId;
     }
@@ -906,6 +906,7 @@
       if(!key){ if(hadPending){ needsKey = true; syncState = 'need-key'; } return; }
       const op = store ? await store.pendingOp() : null;
       const opId = op ? op.op_id : newId();
+      const commitReason = (op && op.reason) || reason || 'sync'; // reason from the durable outbox (survives races)
 
       for(let attempt=0; attempt<MAX_ATTEMPTS; attempt++){
         const pull = await rpc('ayyam_pull', { p_key: key });
@@ -925,7 +926,7 @@
           if(changeSeq===seqAtStart){ await clearPending(merged, serverRev); if(hadPending) syncState='saved'; }
           return;
         }
-        const commit = await rpc('ayyam_commit', { p_key:key, p_expected_revision: serverRev, p_data: merged, p_op_id: opId, p_reason: reason || 'sync' });
+        const commit = await rpc('ayyam_commit', { p_key:key, p_expected_revision: serverRev, p_data: merged, p_op_id: opId, p_reason: commitReason });
         if(commit.status === 'unauthorized'){ needsKey = true; syncState='need-key'; setDeviceKey(''); return; }
         if(commit.status === 'conflict'){ await sleep(backoff(attempt)); continue; } // someone wrote first → re-pull/re-merge
         if(commit.status === 'invalid' || commit.status === 'too_large'){ syncState='error'; if(store) store.logDiag({type:'commit-rejected', status:commit.status}); return; }
@@ -962,7 +963,7 @@
     syncState = 'syncing';
     updateSyncBadge();
     try{
-      await persistEnrichedEdit(enriched);
+      await persistEnrichedEdit(enriched, (reason==='reset'||reason==='import') ? reason : 'sync');
       storageError = false;
     }catch(e){
       storageError = true;
@@ -979,8 +980,8 @@
 
   // Reconnecting/refocusing/resuming always syncs — to PUSH our changes and PULL other devices'.
   // A short debounce coalesces bursts of these events; syncNow itself is single-flight (no storms).
-  let syncDebounce = null;
-  function scheduleSync(){ clearTimeout(syncDebounce); syncDebounce = setTimeout(()=>syncNow(), 300); }
+  let syncDebounce = null, startupDone = false;
+  function scheduleSync(){ if(!startupDone) return; clearTimeout(syncDebounce); syncDebounce = setTimeout(()=>syncNow(), 300); }
   window.addEventListener('online', scheduleSync);
   window.addEventListener('focus', scheduleSync);
   window.addEventListener('pageshow', scheduleSync);       // bfcache resume (iOS/Safari)
@@ -2045,7 +2046,7 @@
     if(localOnly){ try{ localStorage.setItem('ayyam_local_only_v1','1'); }catch(e){} }
     setPending(true);
     try{ await persistEnrichedEdit(enriched); storageError=false; }catch(e){ storageError=true; }
-    clearTimeout(saveTimer); saveTimer = setTimeout(()=>syncNow('init'), 300);
+    await syncNow('init'); // deterministic: commit the seed before startup finishes (no race with scheduleSync)
   }
 
   // First-load pull on a device with no local data — classifies the outcome precisely so we never show
@@ -2127,6 +2128,7 @@
     await runFirstLoad();
   }
   updateSyncBadge();
+  startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
   autoRefreshLocation();
 })();
 </script>
