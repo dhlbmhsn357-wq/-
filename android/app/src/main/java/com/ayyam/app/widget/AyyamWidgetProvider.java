@@ -141,9 +141,9 @@ public class AyyamWidgetProvider extends AppWidgetProvider {
 
         // Header / whole-widget tap → open Today.
         rv.setOnClickPendingIntent(R.id.w_brand, deepLink(context, "ayyam://today", id * 100));
-        rv.setOnClickPendingIntent(R.id.w_root, deepLink(context, "ayyam://today", id * 100 + 99));
+        rv.setOnClickPendingIntent(R.id.widget_root, deepLink(context, "ayyam://today", id * 100 + 99));
 
-        rv.setContentDescription(R.id.w_root, "أيام — " + (m.dayLabel.length() > 0 ? m.dayLabel : "مهام اليوم"));
+        rv.setContentDescription(R.id.widget_root, "أيام — " + (m.dayLabel.length() > 0 ? m.dayLabel : "مهام اليوم"));
         return rv;
     }
 
