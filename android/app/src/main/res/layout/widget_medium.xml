@@ -67,7 +67,7 @@
         android:background="@drawable/widget_next_bg"
         android:padding="10dp"
         android:layout_marginTop="11dp">
-        <View
+        <ImageView
             android:layout_width="3dp"
             android:layout_height="match_parent"
             android:layout_marginEnd="10dp"
@@ -150,7 +150,7 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
-    <Space android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
 
     <!-- Footer -->
     <LinearLayout

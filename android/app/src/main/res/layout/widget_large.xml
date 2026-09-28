@@ -63,7 +63,7 @@
         android:background="@drawable/widget_next_bg"
         android:padding="12dp"
         android:layout_marginTop="12dp">
-        <View
+        <ImageView
             android:layout_width="3dp"
             android:layout_height="match_parent"
             android:layout_marginEnd="12dp"
@@ -138,7 +138,7 @@
     <TextView android:id="@+id/w_row2" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:maxLines="1" android:ellipsize="end" android:textColor="#AEB7C6" android:textSize="13sp" android:visibility="gone" />
     <TextView android:id="@+id/w_row3" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:maxLines="1" android:ellipsize="end" android:textColor="#AEB7C6" android:textSize="13sp" android:visibility="gone" />
 
-    <Space android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
 
     <LinearLayout
         android:layout_width="match_parent"
