@@ -130,7 +130,10 @@ public class SyncE2ETest {
             // Nudge the app's own sync triggers (online/focus) so it does not wait on a debounce/interval.
             probe(s, "window.dispatchEvent(new Event('online'));window.dispatchEvent(new Event('focus'));window.__probe='nudged';", 5);
             String drained = probe(s, outboxDrainJs(), 60);
-            assertTrue("outbox did not drain (online sync), got: " + drained, drained.contains("SYNCED"));
+            if (!drained.contains("SYNCED")) {
+                String diag = probe(s, dumpStateJs(), 20); // app's own sync-error diag + outbox + onLine
+                assertTrue("outbox did not drain; drain=" + drained + " | " + diag, false);
+            }
         }
 
         // 4) The added task must be present on the backend (real server-side proof).
@@ -145,6 +148,17 @@ public class SyncE2ETest {
         return "var o=indexedDB.open('ayyam');o.onsuccess=function(){try{var db=o.result;var t=db.transaction('outbox').objectStore('outbox').count();"
              + "t.onsuccess=function(){window.__probe=(t.result===0)?'SYNCED':('PENDING:'+t.result);};t.onerror=function(){window.__probe='COUNT-ERR';};}"
              + "catch(e){window.__probe='NO-STORE:'+e;}};o.onerror=function(){window.__probe='OPEN-ERR';};";
+    }
+
+    // On failure: dump the app's own diagnostics (DB 'ayyam' store 'diag' = sync-error events), the
+    // pending outbox op, and navigator.onLine — the ground truth for why a sync did not commit.
+    static String dumpStateJs() {
+        return "var o=indexedDB.open('ayyam');o.onsuccess=function(){var db=o.result;try{var tx=db.transaction(['diag','outbox']);"
+             + "var d=tx.objectStore('diag').getAll();var b=tx.objectStore('outbox').getAll();"
+             + "d.onsuccess=function(){b.onsuccess=function(){window.__probe='onLine='+navigator.onLine"
+             + "+' diag='+JSON.stringify((d.result||[]).slice(-10))"
+             + "+' outbox='+JSON.stringify((b.result||[]).map(function(x){return {op:(x.op_id||'').slice(0,8),reason:x.reason,state:x.state,err:x.last_error};}));};};}"
+             + "catch(e){window.__probe='DIAG-ERR:'+e;}};o.onerror=function(){window.__probe='OPEN-ERR';};";
     }
 
     static String jsStr(String s) { return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""; }

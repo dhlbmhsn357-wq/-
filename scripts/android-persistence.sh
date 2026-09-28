@@ -42,6 +42,9 @@ runtest 'com.ayyam.app.WebPushProbeTest'
 echo "### 0e) Local notifications: receiver stale-guard + store validation"
 runtest 'com.ayyam.app.NotifReceiverTest'
 
+echo "### 0f) Local notifications: no duplicate alarms across re-plans + boot re-schedule"
+runtest 'com.ayyam.app.NotifSchedulerTest'
+
 echo "### 1) fresh write (local-asset load + IDB + Keystore + widget snapshot)"
 runtest 'com.ayyam.app.ShellPersistenceTest#writeMarker'
 runtest 'com.ayyam.app.SecureStoreTest#writeKey'

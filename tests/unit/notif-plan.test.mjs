@@ -73,3 +73,23 @@ test('no location → falls back to default, still produces a plan', () => {
   assert.equal(plan.tz, 'Africa/Cairo');
   assert.ok(plan.items.length >= 1);
 });
+
+// Guards the Phase F timezone fix: the plan's calendar day is derived in the LOCATION timezone, NOT the
+// runtime TZ. For the SAME instant, a location whose local clock has rolled into the next day schedules
+// for that next day, while a western location still schedules for the current day. A runtime-TZ bug
+// (the original defect, caught only on the UTC CI host) would give both the same date.
+test('the scheduled day is derived from the location timezone, not the runtime TZ', () => {
+  const everyDay = { sat: [{ id: 't', title: 'ورد', period: 'isha' }], sun: [{ id: 't', title: 'ورد', period: 'isha' }],
+    mon: [{ id: 't', title: 'ورد', period: 'isha' }], tue: [{ id: 't', title: 'ورد', period: 'isha' }],
+    wed: [{ id: 't', title: 'ورد', period: 'isha' }], thu: [{ id: 't', title: 'ورد', period: 'isha' }],
+    fri: [{ id: 't', title: 'ورد', period: 'isha' }] };
+  const stateFor = (loc) => ({ template: everyDay, logs: {}, prefs: { location: loc }, tplArchive: { since: '0000-00-00', versions: [] } });
+  const nowMs = Date.UTC(2026, 9, 1, 22, 0, 0); // 2026-10-01T22:00Z: already 2026-10-02 in Cairo, still 2026-10-01 in LA
+  const localDay = (tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(nowMs);
+  const cairo = N.buildPlan(stateFor({ lat: 30.0444, lng: 31.2357, tz: 'Africa/Cairo' }), { adhan, now: nowMs, days: 3 });
+  const la = N.buildPlan(stateFor({ lat: 34.0522, lng: -118.2437, tz: 'America/Los_Angeles' }), { adhan, now: nowMs, days: 3 });
+  assert.ok(cairo.items.length >= 1 && la.items.length >= 1, 'both plans have items');
+  assert.equal(cairo.items[0].date, localDay('Africa/Cairo'), 'Cairo schedules for its local day');
+  assert.equal(la.items[0].date, localDay('America/Los_Angeles'), 'LA schedules for its local day');
+  assert.notEqual(cairo.items[0].date, la.items[0].date, 'same instant, different local day → date is timezone-derived');
+});
