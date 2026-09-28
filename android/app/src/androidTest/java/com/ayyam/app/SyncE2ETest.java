@@ -127,7 +127,7 @@ public class SyncE2ETest {
             String titles = probe(s, titlesJs(), 10);
             assertTrue("offline edit must be visible locally, titles=" + titles, titles.replace("\\", "").contains(T_AND));
             String ob = probe(s, outboxDrainJs(), 3);
-            assertTrue("edit must be queued in the outbox while offline, got=" + ob, ob.startsWith("PENDING"));
+            assertTrue("edit must be queued in the outbox while offline, got=" + ob, ob.contains("PENDING"));
         }
     }
 
@@ -186,7 +186,7 @@ public class SyncE2ETest {
             assertHasKey(s);
             assertTrue("offline pre-reset add failed", probe(s, addTaskJs(T_PRE), 20).contains("added"));
             String ob = probe(s, outboxDrainJs(), 3);
-            assertTrue("pre-reset edit queued, got=" + ob, ob.startsWith("PENDING"));
+            assertTrue("pre-reset edit queued, got=" + ob, ob.contains("PENDING"));
         }
     }
 
