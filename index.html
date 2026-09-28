@@ -109,16 +109,37 @@
       <input id="taskTitle" type="text" placeholder="مثال: مراجعة حفظ جديد">
     </div>
     <div class="field">
-      <label for="taskTime">الوقت (اختياري)</label>
-      <input id="taskTime" type="text" placeholder="مثال: العصر – المغرب">
-    </div>
-    <div class="field">
       <label id="periodPickLbl">مرتبطة بـ</label>
       <div class="period-pick" id="periodPick" role="group" aria-labelledby="periodPickLbl"></div>
+    </div>
+    <div class="field">
+      <label for="taskTimeValue">الوقت</label>
+      <div class="time-row">
+        <input id="taskTimeValue" type="time" aria-label="وقت المهمة">
+        <label class="notime-lbl"><input type="checkbox" id="taskNoTime"> بدون وقت محدد</label>
+      </div>
+    </div>
+    <div class="field" id="recurrenceField">
+      <label id="recPickLbl">التكرار</label>
+      <div class="rec-pick" id="recPick" role="group" aria-labelledby="recPickLbl"></div>
+      <div class="weekday-pick hidden" id="weekdayPick" role="group" aria-label="أيام التكرار"></div>
     </div>
     <div class="sheet-actions">
       <button class="btn ghost" id="cancelAdd">إلغاء</button>
       <button class="btn primary" id="saveAdd">إضافة</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scope chooser for editing/deleting a recurring routine -->
+<div class="overlay" id="scopeOverlay">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="scopeTitle">
+    <h2 id="scopeTitle">تطبيق على</h2>
+    <p id="scopeMsg" style="color:var(--text-dim);font-size:13px;margin-top:0;"></p>
+    <div class="sheet-actions" style="flex-direction:column;gap:8px;align-items:stretch;">
+      <button class="btn primary" id="scopeToday">هذا اليوم فقط</button>
+      <button class="btn primary" id="scopeFuture">هذا اليوم وما بعده</button>
+      <button class="btn ghost" id="scopeCancel">إلغاء</button>
     </div>
   </div>
 </div>
@@ -136,7 +157,7 @@
 
     <div class="tpl-days" id="tplDays" style="margin-top:10px;"></div>
     <div id="tplTasks"></div>
-    <button class="btn primary" id="tplAddTask" style="margin-top:14px;">+ مهمة لهذا اليوم</button>
+    <button class="btn primary" id="tplAddTask" style="margin-top:14px;">+ روتين لهذا اليوم</button>
 
     <div class="report-card" style="margin-top:26px;">
       <h3>المظهر والخلفية</h3>

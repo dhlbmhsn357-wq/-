@@ -32,11 +32,12 @@ test('add, edit title, edit time, edit period, complete, uncomplete, delete', as
   // edit title + time + period via the edit sheet
   await taskRow(page, 'مهمة اختبار').locator('.task-main').click();
   await page.locator('#taskTitle').fill('مهمة معدّلة');
-  await page.locator('#taskTime').fill('العصر – المغرب');
+  await page.locator('#taskNoTime').uncheck().catch(() => {});
+  await page.locator('#taskTimeValue').fill('15:30');       // structured time picker (24h in, Arabic 12h out)
   await page.locator('#periodPick .period-chip', { hasText: 'العصر' }).click();
   await page.locator('#saveAdd').click();
   await expect(page.locator('.task-title', { hasText: 'مهمة معدّلة' })).toBeVisible();
-  await expect(taskRow(page, 'مهمة معدّلة').locator('.task-time')).toContainText('العصر');
+  await expect(taskRow(page, 'مهمة معدّلة').locator('.task-time')).toContainText('٣:٣٠');
 
   // complete → checked; uncomplete → unchecked
   const check = taskRow(page, 'مهمة معدّلة').locator('.check');
@@ -69,20 +70,21 @@ test('navigation: prev/next day, settings, reports, back', async ({ page }) => {
   await expect(page.locator('#mainView')).toBeVisible();
 });
 
-test('template edit today does not change a past day; a future day uses the new template', async ({ page }) => {
+test('editing a routine changes today/future but not a past day (routine management)', async ({ page }) => {
   await prepare(page, { key: true, now: '2026-09-27T10:00:00' }); // Sunday
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
-  // record a past Sunday's first task title
+  // edit the recurring routine via the management screen (applies from today forward, past immutable)
   await page.locator('#openSettings').click();
   await page.locator('.tpl-day-btn', { hasText: 'الأحد' }).click();
-  const firstInput = page.locator('#tplTasks .tpl-task-row input').first();
-  await firstInput.fill('قالب معدّل اليوم');
+  await page.locator('#tplTasks .tpl-routine-main').first().click();
+  await page.locator('#taskTitle').fill('روتين معدّل اليوم');
+  await page.locator('#saveAdd').click(); // template context → "this and future" (no scope prompt)
   await page.locator('#closeSettings').click();
-  // today (Sunday 27) shows the edited template
-  await expect(page.locator('.task-title', { hasText: 'قالب معدّل اليوم' })).toBeVisible();
-  // a PAST Sunday (Sep 20) keeps the old template (not the edit)
+  // today (Sunday 27) shows the edited routine
+  await expect(page.locator('.task-title', { hasText: 'روتين معدّل اليوم' })).toBeVisible();
+  // a PAST Sunday (Sep 20, before migrationDate) keeps the old schedule (not the edit)
   for (let i = 0; i < 7; i++) await page.locator('#prevDay').click();
   await expect(page.locator('#dayName')).toHaveText('الأحد');
-  await expect(page.locator('.task-title', { hasText: 'قالب معدّل اليوم' })).toHaveCount(0);
+  await expect(page.locator('.task-title', { hasText: 'روتين معدّل اليوم' })).toHaveCount(0);
 });

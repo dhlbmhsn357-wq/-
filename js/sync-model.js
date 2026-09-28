@@ -18,12 +18,15 @@
   const TOMBSTONE_TTL_MS = 180 * 24 * 60 * 60 * 1000; // keep deletions 180 days (offline-device safety)
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
   const clone = (o) => JSON.parse(JSON.stringify(o));
+  const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/; // structured 24h "HH:MM" (R2 time picker)
+  const cleanTimeValue = (v) => (typeof v === 'string' && TIME_RE.test(v)) ? v : null;
 
   // ---------- materialized bundle sanitize (shape the app renders) ----------
   function cleanTask(t, order) {
     if (!isObj(t) || typeof t.id !== 'string' || !t.id) return null;
     return { id: t.id, title: typeof t.title === 'string' ? t.title : String(t.title == null ? '' : t.title),
-             time: typeof t.time === 'string' ? t.time : '', period: PERIODS.has(t.period) ? t.period : null,
+             time: typeof t.time === 'string' ? t.time : '', timeValue: cleanTimeValue(t.timeValue),
+             period: PERIODS.has(t.period) ? t.period : null,
              _order: Number.isFinite(order) ? order : 0 };
   }
   function cleanList(a) { return Array.isArray(a) ? a.map((t, i) => cleanTask(t, i)).filter(Boolean) : []; }
@@ -33,7 +36,7 @@
     if (isObj(o)) for (const k of Object.keys(o)) {
       const v = o[k];
       if (isObj(v) && typeof v.title === 'string' && v.title)
-        r[k] = { title: v.title, time: typeof v.time === 'string' ? v.time : '', period: PERIODS.has(v.period) ? v.period : null };
+        r[k] = { title: v.title, time: typeof v.time === 'string' ? v.time : '', timeValue: cleanTimeValue(v.timeValue), period: PERIODS.has(v.period) ? v.period : null };
     }
     return r;
   }
@@ -52,7 +55,8 @@
     else if (freq === 'once') rec.on = DATE_KEY_RE.test(r.on) ? r.on : null;
     return { id: rid, seriesId: typeof raw.seriesId === 'string' && raw.seriesId ? raw.seriesId : rid,
       title: typeof raw.title === 'string' ? raw.title : String(raw.title == null ? '' : raw.title),
-      time: typeof raw.time === 'string' ? raw.time : '', period: PERIODS.has(raw.period) ? raw.period : null,
+      time: typeof raw.time === 'string' ? raw.time : '', timeValue: cleanTimeValue(raw.timeValue),
+      period: PERIODS.has(raw.period) ? raw.period : null,
       order: Number.isFinite(raw.order) ? raw.order : 0, rec };
   }
   function cleanRoutines(map) { const out = {}; if (isObj(map)) for (const k of Object.keys(map)) { const r = cleanRoutine(map[k], k); if (r) out[r.id] = r; } return out; }
@@ -89,7 +93,7 @@
     const migrationDate = DATE_KEY_RE.test(src.migrationDate) ? src.migrationDate : '';
     return { template, logs, prefs, tplArchive, routines, migrationDate };
   }
-  const strip = (t) => ({ id: t.id, title: t.title, time: t.time, period: t.period }); // drop _order for archive equality
+  const strip = (t) => ({ id: t.id, title: t.title, time: t.time, timeValue: t.timeValue || null, period: t.period }); // drop _order for archive equality
 
   // ---------- flatten materialized → leaf registers ----------
   // key kinds: p:<field> | g:<day>:done:<id> | g:<day>:hide:<id> | g:<day>:ovr:<id>
@@ -103,9 +107,9 @@
       for (const id of Object.keys(l.done)) if (l.done[id] === true) out[`g:${day}:done:${id}`] = true;
       for (const id of Object.keys(l.hidden)) if (l.hidden[id] === true) out[`g:${day}:hide:${id}`] = true;
       for (const id of Object.keys(l.overrides)) out[`g:${day}:ovr:${id}`] = l.overrides[id];
-      l.extra.forEach((t, i) => (out[`g:${day}:ext:${t.id}`] = { title: t.title, time: t.time, period: t.period, order: i }));
+      l.extra.forEach((t, i) => (out[`g:${day}:ext:${t.id}`] = { title: t.title, time: t.time, timeValue: t.timeValue || null, period: t.period, order: i }));
     }
-    for (const dc of DAY_CODES) mat.template[dc].forEach((t, i) => (out[`m:${dc}:${t.id}`] = { title: t.title, time: t.time, period: t.period, order: i }));
+    for (const dc of DAY_CODES) mat.template[dc].forEach((t, i) => (out[`m:${dc}:${t.id}`] = { title: t.title, time: t.time, timeValue: t.timeValue || null, period: t.period, order: i }));
     out['arch'] = mat.tplArchive;
     // routine segments (r:<id>, whole-object leaf) + migration fence date (migd). Empty by default.
     for (const id of Object.keys(mat.routines || {})) out[`r:${id}`] = mat.routines[id];
@@ -173,11 +177,11 @@
         const L = ensureDay(day);
         if (kind === 'done') { if (val === true) L.done[id] = true; }
         else if (kind === 'hide') { if (val === true) L.hidden[id] = true; }
-        else if (kind === 'ovr') { L.overrides[id] = { title: val.title, time: val.time || '', period: val.period || null }; }
-        else if (kind === 'ext') { (extras[day] || (extras[day] = [])).push({ order: val.order || 0, task: { id, title: val.title, time: val.time || '', period: val.period || null } }); }
+        else if (kind === 'ovr') { L.overrides[id] = { title: val.title, time: val.time || '', timeValue: val.timeValue || null, period: val.period || null }; }
+        else if (kind === 'ext') { (extras[day] || (extras[day] = [])).push({ order: val.order || 0, task: { id, title: val.title, time: val.time || '', timeValue: val.timeValue || null, period: val.period || null } }); }
       } else if (parts[0] === 'm') {
         const [, dc, id] = parts;
-        (tpl[dc] || (tpl[dc] = [])).push({ order: val.order || 0, task: { id, title: val.title, time: val.time || '', period: val.period || null } });
+        (tpl[dc] || (tpl[dc] = [])).push({ order: val.order || 0, task: { id, title: val.title, time: val.time || '', timeValue: val.timeValue || null, period: val.period || null } });
       }
     }
     for (const day of Object.keys(extras)) ensureDay(day).extra = extras[day].sort((a, b) => a.order - b.order).map((x) => x.task);

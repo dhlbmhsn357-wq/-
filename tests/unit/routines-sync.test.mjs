@@ -43,6 +43,17 @@ test('stale device cannot revive a routine that was deleted (future-delete / har
   assert.equal(merged.routines['x'], undefined);
 });
 
+test('structured timeValue survives the sync round-trip (routine + override)', () => {
+  const r = { id:'r', seriesId:'r', title:'x', timeValue:'09:05', order:0, rec:{ freq:'weekly', days:['mon'], from:'2026-09-28', to:null } };
+  const m = M.sanitizeMaterialized({ routines:{ r }, migrationDate:'2026-09-28',
+    logs:{ '2026-09-28': { done:{}, extra:[], hidden:{}, overrides:{ r:{ title:'x', timeValue:'18:30' } } } } });
+  const round = mat(en(M.empty(), m, 5, 'A'));
+  assert.equal(round.routines['r'].timeValue, '09:05');
+  assert.equal(round.logs['2026-09-28'].overrides['r'].timeValue, '18:30');
+  const bad = M.sanitizeMaterialized({ routines:{ b:{ id:'b', timeValue:'25:99', rec:{freq:'daily'} } } });
+  assert.equal(bad.routines['b'].timeValue, null); // invalid HH:MM normalized to null
+});
+
 test('reset/import (bumpEpoch) carries routines and fences an older-epoch device', () => {
   const seed = en(M.empty(), withRoutines({ r: rt('r', ['mon']) }), 1, 'srv');
   const reset = M.bumpEpoch(seed, withRoutines({ z: rt('z', ['fri']) }), 100, 'A');

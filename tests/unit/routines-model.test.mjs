@@ -116,6 +116,14 @@ test('occurrencesForDate never yields two segments of one series (defensive agai
   assert.equal(occ[0].id, 'b'); // latest `from` wins
 });
 
+test('structured timeValue flows through occurrences and today-only overrides', () => {
+  const withTv = { id:'r', seriesId:'r', title:'ت', timeValue:'09:05', order:0, rec:{ freq:'daily', from:'2026-01-01', to:null } };
+  assert.equal(R.tasksForDate(B({ r: withTv }), '2026-09-28')[0].timeValue, '09:05');
+  const b = B({ r: withTv }, { '2026-09-28': { done:{}, extra:[], hidden:{}, overrides:{ r:{ title:'ت', timeValue:'18:30' } } } });
+  assert.equal(R.tasksForDate(b, '2026-09-28')[0].timeValue, '18:30'); // override wins for that date
+  assert.equal(R.tasksForDate(b, '2026-09-29')[0].timeValue, '09:05'); // other days keep the routine time
+});
+
 test('pre-migration dates fall back to legacy template/tplArchive, ignoring routines', () => {
   const b = { routines: R.cleanRoutines({ r: weekly('r', ['mon']) }), logs: {}, migrationDate: '2026-09-01',
     template: { mon: [{ id: 'old', title: 'قديم', time: '', period: null }], sat: [], sun: [], tue: [], wed: [], thu: [], fri: [] },

@@ -22,6 +22,8 @@
   const PERIODS = new Set(['fajr', 'dhuhr', 'asr', 'maghrib', 'isha']);
   const FREQS = new Set(['once', 'daily', 'weekly']);
   const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/; // structured 24h "HH:MM"
+  const cleanTimeValue = (v) => (typeof v === 'string' && TIME_RE.test(v)) ? v : null;
   const OPEN = '9999-12-31'; // sentinel upper bound for an open-ended segment (rec.to === null)
   const FROM0 = '0000-00-00';
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -51,6 +53,7 @@
       seriesId: str(raw.seriesId) || rid,
       title: str(raw.title),
       time: str(raw.time),
+      timeValue: cleanTimeValue(raw.timeValue),
       period: PERIODS.has(raw.period) ? raw.period : null,
       order: Number.isFinite(raw.order) ? raw.order : 0,
       rec: cleanRec(raw.rec),
@@ -90,7 +93,7 @@
     return Object.keys(bySeries)
       .map((s) => bySeries[s])
       .sort((a, b) => (a.order - b.order) || (a.id < b.id ? -1 : 1))
-      .map((r) => ({ id: r.id, title: r.title, time: r.time, period: r.period, _order: r.order }));
+      .map((r) => ({ id: r.id, title: r.title, time: r.time, timeValue: r.timeValue || null, period: r.period, _order: r.order }));
   }
 
   // ---------- legacy (pre-migration) base: template + tplArchive, verbatim with app.js semantics ----------
@@ -163,6 +166,7 @@
       id: nid, seriesId: cur.seriesId,
       title: 'title' in ch ? ch.title : cur.title,
       time: 'time' in ch ? ch.time : cur.time,
+      timeValue: 'timeValue' in ch ? ch.timeValue : cur.timeValue,
       period: 'period' in ch ? ch.period : cur.period,
       order: 'order' in ch ? ch.order : cur.order,
       rec: Object.assign({}, cur.rec, (ch.rec || {}), { from: atDate, to: null }),
@@ -203,7 +207,7 @@
         if (routines[rid]) rid = `${t.id}~${code}`; // defensive: template ids are unique in practice
         routines[rid] = {
           id: rid, seriesId: rid,
-          title: str(t.title), time: str(t.time), period: PERIODS.has(t.period) ? t.period : null,
+          title: str(t.title), time: str(t.time), timeValue: cleanTimeValue(t.timeValue), period: PERIODS.has(t.period) ? t.period : null,
           order: i,
           rec: { freq: 'weekly', days: [code], from: migrationDate, to: null },
         };

@@ -241,6 +241,8 @@
   // value can never crash rendering (it is dropped or replaced with a safe default).
   const isObj = v => v!==null && typeof v==='object' && !Array.isArray(v);
   const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/; // structured 24h "HH:MM" (R2 time picker)
+  const cleanTimeValue = v => (typeof v==='string' && TIME_RE.test(v)) ? v : null;
   const EPOCH_KEY = '0000-00-00'; // sorts before every real date key
 
   function cleanTask(t){
@@ -249,6 +251,7 @@
       id: t.id,
       title: typeof t.title==='string' ? t.title : String(t.title ?? ''),
       time: typeof t.time==='string' ? t.time : '',
+      timeValue: cleanTimeValue(t.timeValue),
       period: PERIOD_MAP[t.period] ? t.period : null,
     };
   }
@@ -263,7 +266,7 @@
     if(isObj(o)) Object.keys(o).forEach(k=>{
       const v = o[k];
       if(isObj(v) && typeof v.title==='string' && v.title){
-        r[k] = { title: v.title, time: typeof v.time==='string' ? v.time : '', period: PERIOD_MAP[v.period] ? v.period : null };
+        r[k] = { title: v.title, time: typeof v.time==='string' ? v.time : '', timeValue: cleanTimeValue(v.timeValue), period: PERIOD_MAP[v.period] ? v.period : null };
       }
     });
     return r;
@@ -488,7 +491,7 @@
   async function saveBundle(reason){
     changeSeq++;
     const now = Date.now();
-    if(reason === 'reset' || reason === 'import') enriched = M.bumpEpoch(enriched, currentBundle(), now, DEVICE_ID);
+    if(reason === 'reset' || reason === 'import' || reason === 'routines-migrate') enriched = M.bumpEpoch(enriched, currentBundle(), now, DEVICE_ID);
     else enriched = M.enrich(enriched, currentBundle(), now, DEVICE_ID);
     setPending(true);
     syncState = 'syncing';
@@ -507,6 +510,40 @@
     updateSyncBadge();
     clearTimeout(saveTimer);
     saveTimer = setTimeout(()=>syncNow(reason==='reset'?'reset':reason==='import'?'import':'sync'), 600);
+  }
+
+  // ---------- R2: one-time recurrence activation (migration) ----------
+  // Runs once on load over real data: recovery snapshot → AyyamRoutines.migrate() → persist as a new
+  // epoch generation (compatibility fence so a pre-R2 device can't destructively re-write the new state).
+  // Idempotent, fail-safe (on any error the old state is kept and the app stays on the legacy path), and
+  // self-healing (a stray "migrated but routines missing" state is rebuilt from the retained template).
+  let routinesActivated = false;
+  function hasTemplateTasks(tpl){ return isObj(tpl) && DAY_CODES.some(c=> Array.isArray(tpl[c]) && tpl[c].length); }
+  async function activateRoutinesIfNeeded(){
+    if(routinesActivated) return;
+    if(typeof AyyamRoutines==='undefined' || typeof AyyamTime==='undefined' || !M) return; // engine missing → legacy
+    const b = currentBundle();
+    const migrated = !!b.migrationDate && b.routines && Object.keys(b.routines).length>0;
+    const corrupt  = !!b.migrationDate && (!b.routines || Object.keys(b.routines).length===0) && hasTemplateTasks(b.template);
+    if(migrated && !corrupt){ routinesActivated = true; return; } // already migrated → no-op (idempotent)
+    // Nothing to migrate on a truly empty device (before first-load seeds/pulls); the seed/pull path re-invokes this.
+    if(enrichedIsEmpty() && !hasTemplateTasks(b.template) && !(b.logs && Object.keys(b.logs).length)) return;
+    try{
+      const tz = dayTz();
+      const today = AyyamTime.todayKey(tz);
+      if(store){ try{ await store.saveRecovery({ reason:'pre-routines-migration', bundle: clone(b) }); }catch(_){} }
+      const out = AyyamRoutines.migrate(b, today, tz);
+      if(!out.migrationDate || (hasTemplateTasks(b.template) && Object.keys(out.routines||{}).length===0)){
+        throw new Error('invalid migration output'); // rollback-safe: do not activate on a bad result
+      }
+      setState(sanitizeBundle(out));
+      routinesActivated = true;
+      await saveBundle('routines-migrate'); // new epoch generation + durable persist + sync
+      if(store) store.logDiag({ type:'routines-migrated', migrationDate: out.migrationDate, count: Object.keys(out.routines).length });
+    }catch(e){
+      if(store) store.logDiag({ type:'routines-migrate-fail', message: String(e && e.message || e) });
+      // fail-safe: keep old state untouched; migrationDate stays '' → tasksForDate uses the legacy path.
+    }
   }
 
   // Reconnecting/refocusing/resuming always syncs — to PUSH our changes and PULL other devices'.
@@ -595,6 +632,13 @@
   }
   function dayCodeFor(d){ return JSDAY_TO_CODE[d.getDay()]; }
 
+  // Canonical Ayyam-day helpers (R2): the day identity uses prefs.dayTimezone via AyyamTime, NOT the raw
+  // device clock — so two devices in different timezones agree on "today". dayCode of a date KEY is
+  // timezone-independent, so day-navigation still uses local Date math mapped through keys.
+  function dayTz(){ return (typeof AyyamTime!=='undefined') ? AyyamTime.resolveDayTimezone(prefs)
+    : (prefs.dayTimezone || (prefs.location && prefs.location.tz) || 'Africa/Cairo'); }
+  function todayKey(){ return (typeof AyyamTime!=='undefined') ? AyyamTime.todayKey(dayTz()) : dateKey(new Date()); }
+
   function ensureLog(key){
     if(!logs[key]) logs[key] = {done:{}, extra:[], hidden:{}, overrides:{}};
     if(!logs[key].done) logs[key].done = {};
@@ -611,15 +655,22 @@
   // First day the app was actually used (earliest day with any recorded activity), capped at today.
   // Stats and reports ignore earlier days instead of counting them as failures.
   function firstActiveKey(){
-    const today = dateKey(new Date());
+    const today = todayKey();
     let first = today;
     Object.keys(logs).forEach(k=>{ if(k < first && logHasActivity(logs[k])) first = k; });
     return first;
   }
 
+  // R2: materialization runs through the recurrence engine. For dates >= migrationDate it resolves the
+  // routine segments; before migrationDate it falls back to the legacy template/tplArchive path (verbatim
+  // semantics), so past days stay logically identical. Per-day done/hidden/overrides/extra are applied
+  // identically in both regimes. Falls back to the inline legacy path only if the engine failed to load.
   function tasksForDate(d){
-    const code = dayCodeFor(d);
-    const key = dateKey(d);
+    const key = (typeof d==='string') ? d : dateKey(d);
+    if(typeof AyyamRoutines!=='undefined'){
+      return AyyamRoutines.tasksForDate(currentBundle(), key);
+    }
+    const code = JSDAY_TO_CODE[parseKey(key).getDay()];
     const log = readLog(key);
     const base = (templateFor(key)[code]||[])
       .filter(t=>!log.hidden[t.id])
@@ -631,6 +682,17 @@
     const extra = log.extra.map(t=>({...t, done:!!log.done[t.id], fromTemplate:false}));
     return base.concat(extra);
   }
+
+  // Structured-time display: internal storage is 24h "HH:MM"; show Arabic 12h (٣:٣٠ م). Legacy free-text
+  // `time` is shown verbatim when there is no structured timeValue.
+  function fmtTimeValue(v){
+    if(!TIME_RE.test(v||'')) return '';
+    let [h,m] = v.split(':').map(Number);
+    const ap = h>=12 ? 'م' : 'ص';
+    let h12 = h%12; if(h12===0) h12=12;
+    return toArabicNum(h12)+':'+toArabicNum(String(m).padStart(2,'0'))+' '+ap;
+  }
+  function displayTime(t){ return t.timeValue ? fmtTimeValue(t.timeValue) : (t.time||''); }
 
   function pct(tasks){
     if(tasks.length===0) return 0;
@@ -648,9 +710,10 @@
   function pushWidgetSnapshotNow(){
     if(!NATIVE || typeof AyyamWidget==='undefined') return;
     try{
-      const today = new Date();
-      const tasks = tasksForDate(today).map(t=>({ id:t.id, title:t.title, time:t.time, period:t.period, done:t.done }));
-      const snap = AyyamWidget.buildSnapshot({ date: dateKey(today), dayLabel: todayWidgetLabel(today), tasks, now: Date.now(), privacy: widgetPrivacy() });
+      const key = todayKey();
+      const today = parseKey(key);
+      const tasks = tasksForDate(key).map(t=>({ id:t.id, title:t.title, time:displayTime(t), period:t.period, done:t.done }));
+      const snap = AyyamWidget.buildSnapshot({ date: key, dayLabel: todayWidgetLabel(today), tasks, now: Date.now(), privacy: widgetPrivacy() });
       AyyamNative.updateWidgetSnapshot(snap).then(r=>{ if(store && r && !r.ok && !r.skipped) store.logDiag({ type:'widget-bridge-fail' }); }).catch(()=>{});
     }catch(e){ if(store) store.logDiag({ type:'widget-build-fail' }); }
   }
@@ -696,7 +759,7 @@
       if(typeof url!=='string' || url.indexOf('ayyam://')!==0) return; // validate scheme
       const u = new URL(url);
       if(u.hostname !== 'today') return;                                // only the Today host
-      selectedDate = new Date();
+      selectedDate = parseKey(todayKey());
       if($('settingsView') && !$('settingsView').classList.contains('hidden')) closeSettings();
       if($('reportsView') && !$('reportsView').classList.contains('hidden')) closeReports();
       hideStartupState();
@@ -765,18 +828,14 @@
     if(!el) return;
     const tasks = tasksForDate(selectedDate);
     const missing = tasks.filter(t=>!t.done);
-    const isFuture = (()=>{
-      const t = new Date(); t.setHours(0,0,0,0);
-      const s = new Date(selectedDate); s.setHours(0,0,0,0);
-      return s > t;
-    })();
+    const isFuture = dateKey(selectedDate) > todayKey();
 
     if(tasks.length===0){ el.classList.add('hidden'); return; }
     el.classList.remove('hidden');
 
     if(missing.length===0){
       el.classList.add('ok');
-      const isToday = dateKey(selectedDate)===dateKey(new Date());
+      const isToday = dateKey(selectedDate)===todayKey();
       el.innerHTML = `<div class="missing-head">✅ الحمد لله، كل مهام ${isToday ? 'اليوم' : 'هذا اليوم'} متكاملة</div>`;
       return;
     }
@@ -820,7 +879,7 @@
     });
 
     $('statToday').textContent = toArabicNum(pct(tasks))+'٪';
-    $('statTodayLbl').textContent = dateKey(selectedDate)===dateKey(new Date()) ? 'اليوم' : DAY_LABELS[code];
+    $('statTodayLbl').textContent = dateKey(selectedDate)===todayKey() ? 'اليوم' : DAY_LABELS[code];
 
     // week pct
     const wStart = startOfWeek(selectedDate);
@@ -828,7 +887,7 @@
     let weekTasks = [];
     for(let i=0;i<7;i++){
       const d = new Date(wStart); d.setDate(wStart.getDate()+i);
-      if(d > new Date()) continue; // don't count future days in week avg
+      if(dateKey(d) > todayKey()) continue; // don't count future days in week avg
       if(d < firstDay) continue;   // nor days before the app was used
       weekTasks = weekTasks.concat(tasksForDate(d));
     }
@@ -837,8 +896,7 @@
     // streak: consecutive 100% days. Today counts once it's complete; while it's still
     // in progress the streak is counted up to yesterday instead of dropping to zero.
     let streak = 0;
-    let cursor = new Date();
-    cursor.setHours(0,0,0,0);
+    let cursor = parseKey(todayKey());
     const todayTasks = tasksForDate(cursor);
     if(!(todayTasks.length>0 && pct(todayTasks)===100)) cursor.setDate(cursor.getDate()-1);
     while(cursor >= firstDay){
@@ -855,7 +913,7 @@
     const wStart = startOfWeek(selectedDate);
     const strip = $('weekStrip');
     strip.innerHTML='';
-    const today = dateKey(new Date());
+    const today = todayKey();
     for(let i=0;i<7;i++){
       const d = new Date(wStart); d.setDate(wStart.getDate()+i);
       const code = dayCodeFor(d);
@@ -935,10 +993,11 @@
     });
     row.appendChild(mid);
 
-    if(t.time){
+    const disp = displayTime(t);
+    if(disp){
       const time = document.createElement('span');
       time.className='task-time';
-      time.textContent = t.time;
+      time.textContent = disp;
       row.appendChild(time);
     }
 
@@ -966,55 +1025,162 @@
     render();
   }
 
-  // Deletes a task for THIS DAY ONLY. If it comes from the recurring
-  // template, it is hidden just for this date (template stays intact
-  // for other days) — if it's a one-off extra task, it's removed entirely.
-  function deleteTask(t){
-    const key = dateKey(selectedDate);
-    const log = ensureLog(key);
-    if(t.fromTemplate){
-      log.hidden[t.origId] = true;
-      delete log.done[t.origId];
-      delete log.overrides[t.origId];
+  // Delete a task. A one-off extra is removed. A pre-migration (legacy) occurrence is hidden for this
+  // date only. A recurring routine occurrence asks scope: "this day only" (hidden exception) or "this
+  // and future" (end the segment at the previous day — never a hard delete of a segment with history).
+  async function deleteTask(t){
+    const selKey = dateKey(selectedDate);
+    const rt = (t.fromTemplate && routines && routines[t.origId]) ? routines[t.origId] : null;
+    if(rt){
+      const scope = await askScope('delete');
+      if(!scope) return;
+      if(scope==='today'){
+        const log = ensureLog(selKey);
+        log.hidden[t.origId]=true; delete log.done[t.origId]; delete log.overrides[t.origId];
+      } else {
+        routines = AyyamRoutines.endRoutine(routines, t.origId, selKey).routines;
+      }
+    } else if(t.fromTemplate){
+      const log = ensureLog(selKey);
+      log.hidden[t.origId]=true; delete log.done[t.origId]; delete log.overrides[t.origId];
     } else {
-      log.extra = log.extra.filter(x=>x.id!==t.id);
-      delete log.done[t.id];
+      const log = ensureLog(selKey);
+      log.extra = log.extra.filter(x=>x.id!==t.id); delete log.done[t.id];
     }
-    saveLogs(logs);
-    render();
+    await saveBundle('sync'); render();
   }
 
-  // ---------- add / edit task sheet ----------
-  let editingTask = null; // null = adding new, otherwise the task object being edited
+  // ---------- add / edit task sheet (recurrence-aware, R2) ----------
+  let editingTask = null;        // null = adding, otherwise the task object being edited
+  let editingContext = 'day';    // 'day' (main view) | 'template' (recurrence management screen)
+  let isEditingRoutine = false;  // true when the edited occurrence maps to a routine segment
+  let editingRoutineId = null;
+  let pendingRec = { freq: 'once', days: [] }; // UI recurrence: once | weekly | daily | selected
+  let pendingTimeValue = null;
+  const REC_OPTS = [
+    { key:'once',     label:'هذا الأسبوع فقط' },
+    { key:'weekly',   label:'كل أسبوع' },
+    { key:'daily',    label:'كل يوم' },
+    { key:'selected', label:'أيام محددة' },
+  ];
 
-  function openAddSheet(){
-    editingTask = null;
-    $('sheetTitle').textContent = 'مهمة جديدة';
+  function renderPeriodPick(){
+    const pick = $('periodPick'); pick.innerHTML='';
+    pick.appendChild(makeChip('حرة', null, 'var(--surface)'));
+    PERIODS.forEach(p=> pick.appendChild(makeChip(p.label, p.key, p.color)));
+  }
+  function defaultDay(){ return editingContext==='template' ? settingsDay : (typeof AyyamTime!=='undefined' ? AyyamTime.dayCode(dateKey(selectedDate)) : dayCodeFor(selectedDate)); }
+  function renderRecPick(){
+    const pick = $('recPick'); if(!pick) return; pick.innerHTML='';
+    REC_OPTS.forEach(o=>{
+      const chip = document.createElement('button'); chip.type='button';
+      chip.className='rec-chip'+(pendingRec.freq===o.key?' active':'');
+      chip.textContent=o.label; chip.dataset.rec=o.key;
+      chip.setAttribute('aria-pressed', String(pendingRec.freq===o.key));
+      chip.addEventListener('click', ()=>{
+        pendingRec.freq=o.key;
+        if(o.key==='weekly') pendingRec.days=[defaultDay()];
+        else if(o.key==='selected'){ if(!pendingRec.days.length) pendingRec.days=[defaultDay()]; }
+        else pendingRec.days=[];
+        renderRecPick(); renderWeekdayPick();
+      });
+      pick.appendChild(chip);
+    });
+  }
+  function renderWeekdayPick(){
+    const wp=$('weekdayPick'); if(!wp) return;
+    const show = pendingRec.freq==='selected';
+    wp.classList.toggle('hidden', !show);
+    wp.innerHTML='';
+    if(!show) return;
+    DAY_CODES.forEach(code=>{
+      const b=document.createElement('button'); b.type='button';
+      b.className='wd-chip'+(pendingRec.days.includes(code)?' active':'');
+      b.textContent=DAY_LABELS_SHORT[code]; b.setAttribute('aria-label', DAY_LABELS[code]);
+      b.setAttribute('aria-pressed', String(pendingRec.days.includes(code)));
+      b.addEventListener('click', ()=>{
+        const i=pendingRec.days.indexOf(code);
+        if(i>=0) pendingRec.days.splice(i,1); else pendingRec.days.push(code);
+        renderWeekdayPick();
+      });
+      wp.appendChild(b);
+    });
+  }
+  function setTimeUI(tv){
+    const inp=$('taskTimeValue'), no=$('taskNoTime');
+    if(tv){ inp.value=tv; no.checked=false; inp.disabled=false; }
+    else { inp.value=''; no.checked=true; inp.disabled=true; }
+  }
+  function readTimeUI(){
+    if($('taskNoTime').checked) return null;
+    const v=$('taskTimeValue').value; return TIME_RE.test(v) ? v : null;
+  }
+  function showRecurrenceField(show){ const f=$('recurrenceField'); if(f) f.classList.toggle('hidden', !show); }
+  // Build a routine rec object from the current UI selection, effective from `fromKey`.
+  function recFromPending(fromKey){
+    const f=pendingRec.freq;
+    if(f==='daily') return { freq:'daily', days:[], from:fromKey, to:null };
+    if(f==='once')  return { freq:'once', on:fromKey, from:fromKey, to:null };
+    let days = (pendingRec.days && pendingRec.days.length) ? pendingRec.days.slice()
+      : [ (typeof AyyamTime!=='undefined' ? AyyamTime.dayCode(fromKey) : defaultDay()) ];
+    return { freq:'weekly', days, from:fromKey, to:null };
+  }
+  function recSummary(r){
+    const rec=r.rec||{};
+    if(rec.freq==='daily') return 'كل يوم';
+    if(rec.freq==='once') return 'مرة واحدة';
+    const days=rec.days||[];
+    if(days.length<=1) return 'كل ' + (DAY_LABELS[days[0]]||'أسبوع');
+    return days.map(d=>DAY_LABELS_SHORT[d]).join('، ');
+  }
+
+  function openAddSheet(opts){
+    opts = (opts && typeof opts==='object' && !opts.type) ? opts : {}; // ignore DOM events passed as arg
+    editingTask = null; isEditingRoutine=false; editingRoutineId=null;
+    editingContext = opts.mode==='template' ? 'template' : 'day';
+    $('sheetTitle').textContent = editingContext==='template' ? 'روتين جديد' : 'مهمة جديدة';
     $('saveAdd').textContent = 'إضافة';
     $('taskTitle').value='';
-    $('taskTime').value='';
     pendingPeriod = null;
-    const pick = $('periodPick');
-    pick.innerHTML='';
-    const noneChip = makeChip('بدون وقت محدد', null, 'var(--surface)');
-    pick.appendChild(noneChip);
-    PERIODS.forEach(p=> pick.appendChild(makeChip(p.label, p.key, p.color)));
+    pendingTimeValue = null; setTimeUI(null);
+    if(editingContext==='template') pendingRec = { freq:'weekly', days:[ opts.day || settingsDay ] };
+    else pendingRec = { freq:'once', days:[] }; // day add defaults to "this week only" (no assumption of weekly)
+    renderPeriodPick(); renderRecPick(); renderWeekdayPick(); showRecurrenceField(true);
     showSheet();
   }
 
   function openEditSheet(t){
-    editingTask = t;
+    editingTask = t; editingContext='day';
+    const rt = (t.fromTemplate && routines && routines[t.origId]) ? routines[t.origId] : null;
+    isEditingRoutine = !!rt; editingRoutineId = rt ? rt.id : null;
     $('sheetTitle').textContent = 'تعديل المهمة';
     $('saveAdd').textContent = 'حفظ التعديل';
     $('taskTitle').value = t.title;
-    $('taskTime').value = t.time || '';
     pendingPeriod = t.period || null;
-    const pick = $('periodPick');
-    pick.innerHTML='';
-    const noneChip = makeChip('بدون وقت محدد', null, 'var(--surface)');
-    pick.appendChild(noneChip);
-    PERIODS.forEach(p=> pick.appendChild(makeChip(p.label, p.key, p.color)));
+    pendingTimeValue = t.timeValue || null; setTimeUI(pendingTimeValue);
+    renderPeriodPick();
+    if(rt){ setPendingRecFromRoutine(rt); renderRecPick(); renderWeekdayPick(); showRecurrenceField(true); }
+    else { showRecurrenceField(false); } // one-off extra or pre-migration occurrence: no recurrence editing
     showSheet();
+  }
+
+  // Open the editor for a routine from the recurrence-management screen (edits apply from today forward).
+  function openRoutineEditor(r){
+    editingTask = { id:r.id, origId:r.id, title:r.title, period:r.period, timeValue:r.timeValue, time:r.time, fromTemplate:true };
+    editingContext='template'; isEditingRoutine=true; editingRoutineId=r.id;
+    $('sheetTitle').textContent='تعديل الروتين';
+    $('saveAdd').textContent='حفظ';
+    $('taskTitle').value=r.title;
+    pendingPeriod=r.period||null;
+    pendingTimeValue=r.timeValue||null; setTimeUI(pendingTimeValue);
+    renderPeriodPick(); setPendingRecFromRoutine(r); renderRecPick(); renderWeekdayPick(); showRecurrenceField(true);
+    showSheet();
+  }
+  function setPendingRecFromRoutine(r){
+    const rec=r.rec||{};
+    if(rec.freq==='daily') pendingRec={freq:'daily',days:[]};
+    else if(rec.freq==='once') pendingRec={freq:'once',days:[]};
+    else { const days=(rec.days||[]).slice(); pendingRec = (days.length>1) ? {freq:'selected',days} : {freq:'weekly',days}; }
   }
 
   function makeChip(label, key, color){
@@ -1051,7 +1217,7 @@
   // Keyboard: Enter saves, Escape cancels, Tab stays inside the open sheet.
   $('addOverlay').addEventListener('keydown', (e)=>{
     if(e.key==='Escape'){ e.preventDefault(); closeAddSheet(); return; }
-    if(e.key==='Enter' && (e.target.id==='taskTitle' || e.target.id==='taskTime')){ e.preventDefault(); saveNewTask(); return; }
+    if(e.key==='Enter' && e.target.id==='taskTitle'){ e.preventDefault(); saveTask(); return; }
     if(e.key==='Tab'){
       const f = Array.from($('addOverlay').querySelectorAll('input, button'));
       const first = f[0], last = f[f.length-1];
@@ -1060,38 +1226,86 @@
     }
   });
 
-  function saveNewTask(){
+  // Scope chooser for editing/deleting a recurring routine (resolves 'today' | 'future' | null).
+  let scopeResolver = null;
+  function askScope(kind){
+    return new Promise((resolve)=>{
+      scopeResolver = resolve;
+      $('scopeMsg').textContent = kind==='delete' ? 'حذف هذه المهمة المتكررة من:' : 'تطبيق التعديل على:';
+      $('scopeOverlay').classList.add('show');
+    });
+  }
+  function resolveScope(v){
+    $('scopeOverlay').classList.remove('show');
+    const r = scopeResolver; scopeResolver = null;
+    if(r) r(v);
+  }
+
+  async function saveTask(){
     const title = $('taskTitle').value.trim();
     if(!title){ $('taskTitle').focus(); return; }
-    const time = $('taskTime').value.trim();
-    const key = dateKey(selectedDate);
-    const log = ensureLog(key);
+    const timeValue = readTimeUI();
+    const period = pendingPeriod;
+    const selKey = dateKey(selectedDate);
 
-    if(editingTask){
-      if(editingTask.fromTemplate){
-        // store a per-day override so the recurring template stays untouched
-        log.overrides[editingTask.origId] = { title, time, period: pendingPeriod };
+    // Recurrence-management screen: add/edit a routine, effective from today forward (past immutable).
+    if(editingContext==='template'){ await saveTemplateRoutine(title, period, timeValue); return; }
+
+    if(!editingTask){
+      // ADD from the day view
+      if(pendingRec.freq==='once'){
+        const log = ensureLog(selKey);
+        log.extra.push({ id:nid(), title, time:'', timeValue, period }); // one-off on this date
       } else {
-        const item = log.extra.find(x=>x.id===editingTask.id);
-        if(item){ item.title = title; item.time = time; item.period = pendingPeriod; }
+        const from = (selKey < todayKey()) ? todayKey() : selKey; // recurring never starts in the past
+        const rec = recFromPending(from);
+        const id = nid();
+        routines[id] = { id, seriesId:id, title, time:'', timeValue, period, order:Object.keys(routines).length, rec };
       }
-    } else {
-      log.extra.push({id:nid(), title, time, period:pendingPeriod});
+      await saveBundle('sync'); closeAddSheet(); render(); return;
     }
-    saveLogs(logs);
-    closeAddSheet();
-    render();
+
+    // EDIT an existing occurrence
+    const t = editingTask;
+    if(isEditingRoutine){
+      const scope = await askScope('edit');
+      if(!scope) return; // cancelled → keep editing
+      if(scope==='today'){
+        ensureLog(selKey).overrides[t.origId] = { title, time:'', timeValue, period };
+      } else {
+        routines = AyyamRoutines.splitRoutine(routines, t.origId, selKey, { title, period, timeValue, rec: recFromPending(selKey) });
+      }
+    } else if(t.fromTemplate){
+      // pre-migration (legacy) occurrence → today-only override
+      ensureLog(selKey).overrides[t.origId] = { title, time:'', timeValue, period };
+    } else {
+      const item = ensureLog(selKey).extra.find(x=>x.id===t.id);
+      if(item){ item.title=title; item.period=period; item.timeValue=timeValue; item.time=''; }
+    }
+    await saveBundle('sync'); closeAddSheet(); render();
+  }
+
+  async function saveTemplateRoutine(title, period, timeValue){
+    const tk = todayKey();
+    if(editingTask && isEditingRoutine){
+      routines = AyyamRoutines.splitRoutine(routines, editingRoutineId, tk, { title, period, timeValue, rec: recFromPending(tk) });
+    } else {
+      const id = nid();
+      routines[id] = { id, seriesId:id, title, time:'', timeValue, period, order:Object.keys(routines).length, rec: recFromPending(tk) };
+    }
+    await saveBundle('sync'); closeAddSheet(); renderTplDays(); renderTplTasks(); render();
   }
 
   function clearWholeDay(){
     const ok = confirm('هل تريد مسح كل مهام هذا اليوم؟ يمكنك دائمًا إضافة مهام جديدة بعدها.');
     if(!ok) return;
     const key = dateKey(selectedDate);
-    const code = dayCodeFor(selectedDate);
     const log = ensureLog(key);
-    (templateFor(key)[code]||[]).forEach(t=>{ log.hidden[t.id] = true; delete log.done[t.id]; delete log.overrides[t.id]; });
+    tasksForDate(key).forEach(t=>{
+      if(t.fromTemplate){ log.hidden[t.origId] = true; delete log.done[t.origId]; delete log.overrides[t.origId]; }
+    });
     log.extra = [];
-    saveLogs(logs);
+    saveBundle('sync');
     render();
   }
 
@@ -1223,7 +1437,7 @@
   // Every range starts no earlier than the first day the app was used (parsed as local midnight,
   // so today is always included).
   function rangeDates(range){
-    const today = new Date(); today.setHours(0,0,0,0);
+    const today = parseKey(todayKey());
     const firstDay = parseKey(firstActiveKey());
     let start;
     if(range==='week'){
@@ -1245,7 +1459,7 @@
 
   function renderReports(){
     const dates = rangeDates(reportRange);
-    const todayKey = dateKey(new Date());
+    const tKey = todayKey();
     let allTasks = [];
     const perDay = [];
     dates.forEach(d=>{
@@ -1255,7 +1469,7 @@
     });
     // Only fully-finished days count toward "weakest day" / "most missed"
     // judgments — today is still in progress and shouldn't be scored as a failure.
-    const perDayFinal = perDay.filter(({date}) => dateKey(date) !== todayKey);
+    const perDayFinal = perDay.filter(({date}) => dateKey(date) !== tKey);
 
     const byPeriodEl = $('reportByPeriod');
     byPeriodEl.innerHTML = '';
@@ -1346,59 +1560,47 @@
       el.appendChild(btn);
     });
   }
+  // Routines whose CURRENT (not-yet-ended) segment applies to a weekday — the recurrence-management list.
+  function routinesForDay(code){
+    const tk = todayKey();
+    return Object.keys(routines).map(id=>routines[id]).filter(r=>{
+      if(!r || !r.rec) return false;
+      if(r.rec.to && r.rec.to < tk) return false;        // ended in the past
+      if(r.rec.freq==='daily') return true;
+      if(r.rec.freq==='weekly') return (r.rec.days||[]).includes(code);
+      return false;                                       // 'once' is not part of weekly management
+    }).sort((a,b)=>(a.order-b.order)||(a.id<b.id?-1:1));
+  }
+  async function deleteRoutineFromTemplate(r){
+    if(!confirm(`حذف «${r.title}» من الروتين من اليوم فصاعدًا؟ الأيام السابقة لا تتأثر.`)) return;
+    routines = AyyamRoutines.endRoutine(routines, r.id, todayKey()).routines;
+    await saveBundle('sync');
+    renderTplTasks(); render();
+  }
   function renderTplTasks(){
     const el = $('tplTasks');
     el.innerHTML='';
-    (template[settingsDay]||[]).forEach(t=>{
+    const list = routinesForDay(settingsDay);
+    if(!list.length){ el.innerHTML='<p class="empty" style="padding:10px 0;">لا روتين لهذا اليوم بعد. اضغط بالأسفل لإضافة روتين.</p>'; return; }
+    list.forEach(r=>{
       const row = document.createElement('div');
       row.className='tpl-task-row';
-      // period picker (replaces the old read-only colour dot); its border shows the period colour
-      const periodSel = document.createElement('select');
-      periodSel.className = 'tpl-period';
-      periodSel.setAttribute('aria-label','وقت المهمة');
-      [{key:'', label:'حرة'}, ...PERIODS].forEach(p=>{
-        const o = document.createElement('option');
-        o.value = p.key; o.textContent = p.label;
-        periodSel.appendChild(o);
-      });
-      periodSel.value = t.period || '';
-      const paintPeriod = ()=>{ periodSel.style.borderInlineStart = '4px solid ' + (t.period ? PERIOD_MAP[t.period].color : 'var(--line)'); };
-      paintPeriod();
-      periodSel.addEventListener('change', ()=>{
-        beginTemplateEdit();
-        t.period = periodSel.value || null;
-        paintPeriod();
-        saveTemplate(template);
-      });
-      row.appendChild(periodSel);
-
-      const titleInput = document.createElement('input');
-      titleInput.value = t.title;
-      titleInput.setAttribute('aria-label','اسم المهمة');
-      titleInput.addEventListener('input', ()=>{ beginTemplateEdit(); t.title = titleInput.value; saveTemplate(template); });
-      row.appendChild(titleInput);
-
-      const timeInput = document.createElement('input');
-      timeInput.className = 'tpl-time-input';
-      timeInput.value = t.time || '';
-      timeInput.style.color='var(--text-dim)';
-      timeInput.placeholder='الوقت';
-      timeInput.setAttribute('aria-label','الوقت');
-      timeInput.addEventListener('input', ()=>{ beginTemplateEdit(); t.time = timeInput.value; saveTemplate(template); });
-      row.appendChild(timeInput);
+      const main = document.createElement('button');
+      main.className='tpl-routine-main';
+      main.style.cssText='flex:1;text-align:start;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);font-family:inherit;cursor:pointer;';
+      main.style.borderInlineStart = '4px solid ' + (r.period ? PERIOD_MAP[r.period].color : 'var(--line)');
+      const disp = displayTime(r);
+      main.innerHTML = `<div>${escapeHtml(r.title)}</div><div class="rec-summary">${escapeHtml(recSummary(r))}${disp?(' · '+escapeHtml(disp)):''}</div>`;
+      main.setAttribute('aria-label','تعديل الروتين: '+r.title);
+      main.addEventListener('click', ()=> openRoutineEditor(r));
+      row.appendChild(main);
 
       const del = document.createElement('button');
       del.className='task-del';
       del.style.flex='none';
       del.textContent='✕';
-      del.setAttribute('aria-label','حذف المهمة من القالب');
-      del.addEventListener('click', ()=>{
-        if(!confirm(`حذف «${t.title}» من قالب ${DAY_LABELS[settingsDay]}؟ الأيام السابقة لن تتأثر.`)) return;
-        beginTemplateEdit();
-        template[settingsDay] = template[settingsDay].filter(x=>x.id!==t.id);
-        saveTemplate(template);
-        renderTplTasks();
-      });
+      del.setAttribute('aria-label','حذف الروتين');
+      del.addEventListener('click', ()=> deleteRoutineFromTemplate(r));
       row.appendChild(del);
 
       el.appendChild(row);
@@ -1410,10 +1612,18 @@
   $('prevDay').addEventListener('click', ()=>{ selectedDate = new Date(selectedDate); selectedDate.setDate(selectedDate.getDate()-1); render(); });
   $('nextDay').addEventListener('click', ()=>{ selectedDate = new Date(selectedDate); selectedDate.setDate(selectedDate.getDate()+1); render(); });
 
-  $('fabAdd').addEventListener('click', openAddSheet);
+  $('fabAdd').addEventListener('click', ()=> openAddSheet());
   $('cancelAdd').addEventListener('click', closeAddSheet);
-  $('saveAdd').addEventListener('click', saveNewTask);
+  $('saveAdd').addEventListener('click', saveTask);
   $('addOverlay').addEventListener('click', (e)=>{ if(e.target.id==='addOverlay') closeAddSheet(); });
+  // Time picker: "بدون وقت محدد" clears/disables the time input.
+  $('taskNoTime').addEventListener('change', ()=>{ const inp=$('taskTimeValue'); if($('taskNoTime').checked){ inp.value=''; inp.disabled=true; } else { inp.disabled=false; setTimeout(()=>{ try{ inp.focus(); }catch(e){} }, 0); } });
+  $('taskTimeValue').addEventListener('input', ()=>{ if($('taskTimeValue').value) $('taskNoTime').checked=false; });
+  // Recurring edit/delete scope chooser
+  $('scopeToday').addEventListener('click', ()=> resolveScope('today'));
+  $('scopeFuture').addEventListener('click', ()=> resolveScope('future'));
+  $('scopeCancel').addEventListener('click', ()=> resolveScope(null));
+  $('scopeOverlay').addEventListener('click', (e)=>{ if(e.target.id==='scopeOverlay') resolveScope(null); });
 
   $('clearDayBtn').addEventListener('click', clearWholeDay);
   $('restoreDayBtn').addEventListener('click', restoreDayToTemplate);
@@ -1421,14 +1631,7 @@
 
   $('openSettings').addEventListener('click', openSettings);
   $('closeSettings').addEventListener('click', closeSettings);
-  $('tplAddTask').addEventListener('click', ()=>{
-    const t = {id:nid(), period:null, title:'مهمة جديدة', time:''};
-    beginTemplateEdit();
-    if(!template[settingsDay]) template[settingsDay]=[];
-    template[settingsDay].push(t);
-    saveTemplate(template);
-    renderTplTasks();
-  });
+  $('tplAddTask').addEventListener('click', ()=> openAddSheet({ mode:'template', day: settingsDay }));
 
   // reports
   $('openReports').addEventListener('click', openReports);
@@ -1794,8 +1997,8 @@
   }
   async function runFirstLoad(){
     const r = await firstLoadPull();
-    if(r==='ready'){ hideStartupState(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
-    else if(r==='empty'){ hideStartupState(); await seedDefault(false); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
+    if(r==='ready'){ hideStartupState(); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
+    else if(r==='empty'){ hideStartupState(); await seedDefault(false); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
     else if(r==='need-key'){ needsKey=true; syncState='need-key'; updateSyncBadge(); showStartupState('need-key'); }
     else { showStartupState('load-failed'); } // unreachable
   }
@@ -1809,6 +2012,7 @@
   $('startupOffline').addEventListener('click', async ()=>{
     hideStartupState();
     await seedDefault(true); // local-only: baseline-stamped, so a later reconnect merges (not overwrites)
+    await activateRoutinesIfNeeded();
     if(loadingEl) loadingEl.classList.add('hidden');
     render();
   });
@@ -1819,8 +2023,10 @@
   const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
   if(init.state) setState(init.state);
   applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
+  selectedDate = parseKey(todayKey()); // canonical "today" once prefs (dayTimezone) are loaded
   if(init.state && !enrichedIsEmpty()){
-    // existing device: show local data right away; sync merges server changes in the background
+    // existing device: activate routines once (safe migration), then show local data; sync in background
+    await activateRoutinesIfNeeded();
     if(loadingEl) loadingEl.classList.add('hidden');
     render();
     syncNow();
