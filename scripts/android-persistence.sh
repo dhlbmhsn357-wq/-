@@ -47,8 +47,14 @@ runtest 'com.ayyam.app.NotifSchedulerTest'
 
 echo "### 0g) Widget redesign: render every size/state to PNGs for visual review"
 runtest 'com.ayyam.app.WidgetScreenshotTest'
-adb pull /sdcard/Android/data/com.ayyam.app/files/widget-shots widget-shots-out 2>/dev/null || true
-ls -1 widget-shots-out 2>/dev/null || echo "(no widget shots pulled)"
+# The debug APK is debuggable → read the PNGs from the app's INTERNAL files dir via run-as (scoped
+# storage on API 30 blocks a plain adb pull of Android/data).
+mkdir -p widget-shots-out
+for name in small_normal small_all_done medium_normal medium_privacy medium_all_done medium_empty medium_stale medium_no_snapshot large_normal; do
+  adb exec-out run-as com.ayyam.app cat "files/widget-shots/$name.png" > "widget-shots-out/$name.png" 2>/dev/null || true
+done
+find widget-shots-out -type f -size 0 -delete 2>/dev/null || true
+echo "pulled widget shots:"; ls -1 widget-shots-out 2>/dev/null || echo "(none)"
 
 echo "### 1) fresh write (local-asset load + IDB + Keystore + widget snapshot)"
 runtest 'com.ayyam.app.ShellPersistenceTest#writeMarker'

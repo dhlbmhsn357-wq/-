@@ -25,7 +25,7 @@ import org.junit.runner.RunWith;
 public class WidgetSnapshotStoreTest {
     private final Context ctx = ApplicationProvider.getApplicationContext();
     private static final String SNAP =
-        "{\"schema\":1,\"date\":\"2026-09-27\",\"dayLabel\":\"الأحد\",\"done\":4,\"total\":7,\"tasks\":[]}";
+        "{\"schema\":2,\"date\":\"2026-09-27\",\"dayLabel\":\"الأحد\",\"done\":4,\"total\":7,\"tasks\":[]}";
 
     @Test
     public void writeWidget() {
@@ -37,7 +37,7 @@ public class WidgetSnapshotStoreTest {
         String s = WidgetSnapshotStore.read(ctx);
         assertNotNull("no widget snapshot present after lifecycle event", s);
         JSONObject o = new JSONObject(s);                 // throws → malformed = test error
-        assertEquals(1, o.getInt("schema"));
+        assertEquals(2, o.getInt("schema"));
         assertTrue("date must be YYYY-MM-DD", o.getString("date").matches("\\d{4}-\\d{2}-\\d{2}"));
         assertTrue(o.has("done") && o.has("total"));
     }

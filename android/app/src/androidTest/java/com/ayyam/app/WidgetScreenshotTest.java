@@ -40,7 +40,7 @@ public class WidgetScreenshotTest {
         Canvas c = new Canvas(bmp);
         c.drawColor(0xFF2A2622); // neutral home-screen-ish backdrop so the rounded card edges are visible
         v.draw(c);
-        File dir = new File(ctx.getExternalFilesDir(null), "widget-shots");
+        File dir = new File(ctx.getFilesDir(), "widget-shots");
         dir.mkdirs();
         try (FileOutputStream os = new FileOutputStream(new File(dir, name + ".png"))) {
             bmp.compress(Bitmap.CompressFormat.PNG, 100, os);
