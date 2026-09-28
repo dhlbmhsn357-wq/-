@@ -147,9 +147,10 @@ public class SyncE2ETest {
     public void t2_multiDeviceBothPersist() throws Exception {
         try (ActivityScenario<MainActivity> s = launch()) {
             settleSync(s);
-            String titles = probe(s, titlesJs(), 10).replace("\\", "");
-            assertTrue("Android must show its own task after sync, titles=" + titles, titles.contains(T_AND));
-            assertTrue("Android must pull the web-peer's task, titles=" + titles, titles.contains(T_WEB));
+            // Check the app's STORED state (day-agnostic), not the today-view: the web task lives on a
+            // different weekday than "today", but multi-device persistence is about the data, not the view.
+            assertTrue("Android must keep its own task after sync", waitState(s, T_AND, true, 12));
+            assertTrue("Android must pull the web-peer's task into its state", waitState(s, T_WEB, true, 12));
         }
         String db = http("GET", "/__ctl/db");
         assertTrue("server keeps the Android task", db.contains(T_AND));
@@ -161,8 +162,7 @@ public class SyncE2ETest {
     public void t3a_holdStaleOffline() throws Exception {
         try (ActivityScenario<MainActivity> s = launch()) {
             assertHasKey(s);
-            String titles = probe(s, titlesJs(), 10).replace("\\", "");
-            assertTrue("Android still holds the (soon-to-be-deleted) web task offline, titles=" + titles, titles.contains(T_WEB));
+            assertTrue("Android still holds the (soon-to-be-deleted) web task offline", waitState(s, T_WEB, true, 8));
         }
     }
 
@@ -172,8 +172,7 @@ public class SyncE2ETest {
     public void t3b_staleDeleteWins() throws Exception {
         try (ActivityScenario<MainActivity> s = launch()) {
             settleSync(s);
-            String titles = probe(s, titlesJs(), 10).replace("\\", "");
-            assertTrue("the deleted task must NOT be revived on Android, titles=" + titles, !titles.contains(T_WEB));
+            assertTrue("the deleted task must NOT be revived in Android's state", waitState(s, T_WEB, false, 12));
         }
         String db = http("GET", "/__ctl/db");
         assertTrue("a stale Android device must not resurrect the deleted task on the server", !db.contains(T_WEB));
@@ -197,9 +196,8 @@ public class SyncE2ETest {
     public void t4b_resetEpochFence() throws Exception {
         try (ActivityScenario<MainActivity> s = launch()) {
             settleSync(s);
-            String titles = probe(s, titlesJs(), 10).replace("\\", "");
-            assertTrue("Android must adopt the reset generation, titles=" + titles, titles.contains(RESET_MARKER));
-            assertTrue("the stale pre-reset edit must NOT survive into the new generation, titles=" + titles, !titles.contains(T_PRE));
+            assertTrue("Android must adopt the reset generation", waitState(s, RESET_MARKER, true, 12));
+            assertTrue("the stale pre-reset edit must NOT survive into the new generation", waitState(s, T_PRE, false, 12));
             String rec = probe(s, recoveryJs(), 10);
             assertTrue("the fenced (parked) old generation must be kept for recovery, got=" + rec, rec.replace("\\", "").matches(".*REC:[1-9].*"));
         }
@@ -237,6 +235,16 @@ public class SyncE2ETest {
     private void assertHasKey(ActivityScenario<MainActivity> s) throws Exception {
         String key = runJs(s, "(typeof AyyamNative!=='undefined'? (AyyamNative.getKeyCached()? 'has-key':'no-key') : 'no-native')");
         assertTrue("device key must hydrate from Keystore, got=" + key, key.contains("has-key"));
+    }
+    // Poll the app's STORED state until `title` is present (want=true) or absent (want=false). Absorbs the
+    // async pull → merge → adopt → persist that a background sync performs after settleSync returns.
+    private boolean waitState(ActivityScenario<MainActivity> s, String title, boolean want, int maxPolls) throws Exception {
+        for (int i = 0; i < maxPolls; i++) {
+            String st = probe(s, stateHasJs(), 6).replace("\\", "");
+            if (st.contains(title) == want) return true;
+            Thread.sleep(800);
+        }
+        return false;
     }
     // Nudge the app's own online/focus sync triggers, then wait for the outbox to drain (fail with diag).
     private void settleSync(ActivityScenario<MainActivity> s) throws Exception {
@@ -280,9 +288,16 @@ public class SyncE2ETest {
              + "var row=rows.filter(function(r){var t=r.querySelector('.task-title');return t&&t.textContent===" + jsStr(title) + ";})[0];"
              + "if(!row){window.__probe='NO-ROW';return;}var c=row.querySelector('.check');if(!c){window.__probe='NO-CHECK';return;}c.click();window.__probe='toggled';";
     }
-    // JSON array of the task titles currently on screen.
+    // JSON array of the task titles currently on screen (today's view only).
     static String titlesJs() {
         return "window.__probe=JSON.stringify([].slice.call(document.querySelectorAll('.task-title')).map(function(e){return e.textContent;}));";
+    }
+    // The app's full STORED bundle (DB 'ayyam' kv 'state') as JSON — day-agnostic, so it contains tasks
+    // regardless of which weekday they belong to. Used to assert sync results without a today-view race.
+    static String stateHasJs() {
+        return "var o=indexedDB.open('ayyam');o.onsuccess=function(){try{var g=o.result.transaction('kv').objectStore('kv').get('state');"
+             + "g.onsuccess=function(){window.__probe='STATE:'+JSON.stringify(g.result?g.result.v:null);};g.onerror=function(){window.__probe='ST-ERR';};}"
+             + "catch(e){window.__probe='ERR:'+e;}};o.onerror=function(){window.__probe='OPEN-ERR';};";
     }
     // The first pending outbox op's op_id (DB 'ayyam' store 'outbox').
     static String opIdJs() {
