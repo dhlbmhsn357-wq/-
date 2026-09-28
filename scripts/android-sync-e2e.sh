@@ -62,13 +62,13 @@ assert_no_key_in_logs() {
 }
 
 echo "### Device-key gate regression (fresh install → enter key → gate gone; wrong key → re-prompt)"
-runtest "$C#tKeyEnterWithInvisibleCharsAccepted"   # correct key wrapped in bidi/zero-width marks → accepted
+# Wrong-key FIRST while the device is truly fresh (no key AND no local data → the startup gate flow runs;
+# once local data exists the app uses the main-view need-key badge instead of the startup gate).
+runtest "$C#tKeyWrongReprompts"                    # fresh: wrong key → gate stays (no silent pass)
+stop_app
+runtest "$C#tKeyEnterWithInvisibleCharsAccepted"   # fresh: correct key wrapped in bidi/zero-width marks → accepted, gate gone
 stop_app
 runtest "$C#tKeyReopenPersistsNoPrompt"            # force-stop + reopen → key persists, no prompt
-stop_app
-runtest "$C#tKeyClearKey"                          # clear the stored key
-stop_app
-runtest "$C#tKeyWrongReprompts"                    # wrong key → gate returns (no silent pass)
 stop_app
 
 echo "### Scenario 0: reset backend + seed Keystore device key"
