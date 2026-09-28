@@ -63,14 +63,14 @@ public class WidgetScreenshotTest {
 
     @Test
     public void renderAll() throws Exception {
-        shot("small_normal", NORMAL, Size.SMALL, 320, 74);
-        shot("small_all_done", ALL_DONE, Size.SMALL, 320, 74);
-        shot("medium_normal", NORMAL, Size.MEDIUM, 330, 155);
-        shot("medium_privacy", PRIVACY, Size.MEDIUM, 330, 155);
-        shot("medium_all_done", ALL_DONE, Size.MEDIUM, 330, 155);
-        shot("medium_empty", EMPTY, Size.MEDIUM, 330, 155);
-        shot("medium_stale", STALE, Size.MEDIUM, 330, 155);
-        shot("medium_no_snapshot", null, Size.MEDIUM, 330, 155);
-        shot("large_normal", NORMAL, Size.LARGE, 330, 300);
+        shot("small_normal", NORMAL, Size.SMALL, 320, 78);
+        shot("small_all_done", ALL_DONE, Size.SMALL, 320, 78);
+        shot("medium_normal", NORMAL, Size.MEDIUM, 330, 168);
+        shot("medium_privacy", PRIVACY, Size.MEDIUM, 330, 168);
+        shot("medium_all_done", ALL_DONE, Size.MEDIUM, 330, 168);
+        shot("medium_empty", EMPTY, Size.MEDIUM, 330, 168);
+        shot("medium_stale", STALE, Size.MEDIUM, 330, 168);
+        shot("medium_no_snapshot", null, Size.MEDIUM, 330, 168);
+        shot("large_normal", NORMAL, Size.LARGE, 330, 340);
     }
 }

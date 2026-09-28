@@ -79,7 +79,7 @@ public class AyyamWidgetProvider extends AppWidgetProvider {
         } catch (Exception e) { return Size.MEDIUM; }
     }
 
-    private int maxRowsFor(Size s) { return s == Size.LARGE ? 4 : (s == Size.MEDIUM ? 1 : 0); }
+    private int maxRowsFor(Size s) { return s == Size.LARGE ? 4 : 0; } // upcoming rows only on large (medium 4x2 stays lean)
 
     private void updateWidget(Context context, AppWidgetManager mgr, int id) {
         Size size = sizeFor(mgr, id);
@@ -187,7 +187,9 @@ public class AyyamWidgetProvider extends AppWidgetProvider {
                 rv.setViewVisibility(R.id.w_status, View.VISIBLE);
                 rv.setTextViewText(R.id.w_status, statusLine);
             }
-            if (m.periodsText != null && m.periodsText.length() > 0) {
+            // Open-periods line is the key extra on LARGE, and under privacy on any size (no title there).
+            boolean showPeriods = (size == Size.LARGE) || m.privacy;
+            if (showPeriods && m.periodsText != null && m.periodsText.length() > 0) {
                 rv.setViewVisibility(R.id.w_periods, View.VISIBLE);
                 rv.setTextViewText(R.id.w_periods, m.periodsText);
             }

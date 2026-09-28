@@ -49,10 +49,9 @@ public class WidgetRenderTest {
         assertEquals("مجلس العصر", txt(v, R.id.w_next_title));
         assertEquals(View.VISIBLE, vis(v, R.id.w_next_time));
         assertEquals(View.VISIBLE, vis(v, R.id.w_status));
-        assertTrue(txt(v, R.id.w_periods).contains("العصر"));
-        assertTrue(txt(v, R.id.w_done).contains("٢٢"));
-        assertEquals(View.VISIBLE, vis(v, R.id.w_row0));
-        assertTrue(txt(v, R.id.w_row0).contains("الجيم"));
+        assertTrue(txt(v, R.id.w_done).contains("٢٢"));       // "أنجزت ٢٢ من ٢٩"
+        assertEquals(View.GONE, vis(v, R.id.w_periods));       // periods + upcoming rows are LARGE-only
+        assertEquals(View.GONE, vis(v, R.id.w_row0));
     }
 
     @Test
