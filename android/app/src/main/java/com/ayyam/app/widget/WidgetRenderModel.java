@@ -8,28 +8,49 @@ import java.util.List;
 
 /**
  * PURE widget presentation logic — decides WHAT the widget shows from a snapshot + today's date.
- * No Android dependencies, so it is unit-tested on the JVM (WidgetRenderModelTest). The provider
- * only maps this model onto RemoteViews. Handles stale-date, empty, all-done, no-snapshot and privacy.
+ * No Android dependencies, so it is unit-tested on the JVM (WidgetRenderModelTest). The provider only
+ * maps this model onto RemoteViews. Handles stale-date / empty / all-done / no-snapshot / privacy.
+ *
+ * v2: the model is an "assistant" — beyond progress it exposes the NEXT (focus) task, a curated list of
+ * UPCOMING incomplete tasks, which prayer PERIODS still have open tasks, and a calm status cue, so the
+ * widget answers "what now?" and "how much is left?". Task selection is the app's real order only (the
+ * snapshot's `next`/`upcoming`), never time-parsed. Tolerant of a schema-1 snapshot left by an older
+ * build (falls back to `tasks`), so an app update never shows a broken widget.
  */
 public final class WidgetRenderModel {
     public enum State { NORMAL, ALL_DONE, EMPTY, STALE, NO_SNAPSHOT }
 
     public State state = State.NO_SNAPSHOT;
     public String dayLabel = "";
-    public String progressText = "";   // e.g. "٤ / ٧"
-    public int progressPct = 0;        // 0..100
-    public boolean showProgress = false;
-    public String nextTitle = null;    // null when none / privacy
-    public String nextTime = null;
-    public String nextId = null;
-    public boolean showNext = false;
-    public final List<Row> rows = new ArrayList<>();
-    public String message = "";        // for ALL_DONE / EMPTY / STALE / NO_SNAPSHOT
     public boolean privacy = false;
 
+    // progress
+    public boolean showProgress = false;
+    public String progressText = "";   // "٤ / ٧"
+    public int progressPct = 0;        // 0..100
+
+    // next / focus task
+    public boolean showNext = false;
+    public String nextTitle = null;
+    public String nextTime = null;
+    public String nextId = null;
+    public String nextPeriodLabel = ""; // Arabic period label of the next task (may be empty)
+
+    // summary + status
+    public String doneText = "";       // "أنجزت ٢٢ من ٢٩"
+    public String remainingText = "";  // "المتبقي: ٧ مهام"
+    public String periodsText = "";     // "المتبقي: العصر والمغرب"  (may be empty)
+    public String statusText = "";      // calm cue (may be empty)
+
+    // curated upcoming rows (incomplete)
+    public final List<Row> rows = new ArrayList<>();
+
+    public String message = "";        // for ALL_DONE / EMPTY / STALE / NO_SNAPSHOT / privacy-next
+
     public static final class Row {
-        public final String id; public final String title; public final boolean done; public final String time;
-        Row(String id, String t, boolean d, String tm) { this.id = id; title = t; done = d; time = tm; }
+        public final String id; public final String title; public final boolean done;
+        public final String time; public final String periodLabel;
+        Row(String id, String t, boolean d, String tm, String pl) { this.id = id; title = t; done = d; time = tm; periodLabel = pl; }
     }
 
     public static final String MSG_ALL_DONE = "أتممت مهام اليوم ✓";
@@ -37,6 +58,27 @@ public final class WidgetRenderModel {
     public static final String MSG_STALE = "افتح أيام لتحديث مهام اليوم";
     public static final String MSG_NO_SNAPSHOT = "افتح أيام لإعداد الودجت";
     public static final String LABEL_NEXT = "التالي";
+    public static final String NEXT_HIDDEN = "المهمة التالية: مخفية";
+
+    private static String periodLabel(String p) {
+        if (p == null) return "";
+        switch (p) {
+            case "fajr": return "الفجر";
+            case "dhuhr": return "الظهر";
+            case "asr": return "العصر";
+            case "maghrib": return "المغرب";
+            case "isha": return "العشاء";
+            default: return "";
+        }
+    }
+
+    // Arabic task-count grammar (matches the reminders wording).
+    private static String tasksCount(int n) {
+        if (n == 1) return "مهمة واحدة";
+        if (n == 2) return "مهمتان";
+        if (n <= 10) return toArabicNum(n) + " مهام";
+        return toArabicNum(n) + " مهمة";
+    }
 
     public static String toArabicNum(long n) {
         char[] map = {'٠','١','٢','٣','٤','٥','٦','٧','٨','٩'};
@@ -70,38 +112,75 @@ public final class WidgetRenderModel {
 
         int done = o.optInt("done", 0);
         int total = o.optInt("total", 0);
+        int remaining = o.has("remaining") ? o.optInt("remaining", total - done) : (total - done);
         m.progressText = toArabicNum(done) + " / " + toArabicNum(total);
-        m.progressPct = total > 0 ? Math.round((done * 100f) / total) : 0;
+        m.progressPct = o.has("pct") ? clamp(o.optInt("pct", 0)) : (total > 0 ? Math.round((done * 100f) / total) : 0);
         m.showProgress = true;
 
         if (total == 0) { m.state = State.EMPTY; m.message = MSG_EMPTY; m.showProgress = false; return m; }
-        if (done >= total) { m.state = State.ALL_DONE; m.message = MSG_ALL_DONE; }
-        else m.state = State.NORMAL;
+        if (done >= total) { m.state = State.ALL_DONE; m.message = MSG_ALL_DONE; m.progressPct = 100; return m; }
+        m.state = State.NORMAL;
 
-        if (m.privacy) {
-            // No titles/times available; show remaining count as the message when not all done.
-            int remaining = total - done;
-            if (m.state == State.NORMAL) m.message = "لديك " + toArabicNum(remaining) + " مهام متبقية";
-            return m;
-        }
+        // Summary strings (privacy-safe: counts + periods, no titles).
+        m.doneText = "أنجزت " + toArabicNum(done) + " من " + toArabicNum(total);
+        m.remainingText = "المتبقي: " + tasksCount(remaining);
+        m.periodsText = openPeriodsText(o);
+        m.statusText = statusCue(m.progressPct, remaining, total);
 
         JSONObject next = o.optJSONObject("next");
-        if (next != null && m.state == State.NORMAL) {
-            m.nextTitle = next.optString("title", "");
-            m.nextTime = next.optString("time", "");
+        if (next != null) {
             m.nextId = next.optString("id", "");
-            m.showNext = m.nextTitle.length() > 0;
+            m.nextPeriodLabel = periodLabel(next.optString("period", null));
+            if (!m.privacy) {
+                m.nextTitle = next.optString("title", "");
+                m.nextTime = next.optString("time", "");
+                m.showNext = m.nextTitle.length() > 0;
+            } else {
+                m.message = NEXT_HIDDEN; // shown in the next slot under privacy
+            }
         }
-        JSONArray tasks = o.optJSONArray("tasks");
-        if (tasks != null) {
-            for (int i = 0; i < tasks.length() && m.rows.size() < maxRows; i++) {
-                JSONObject t = tasks.optJSONObject(i);
+
+        // Curated upcoming rows: prefer v2 `upcoming` (incomplete only); fall back to schema-1 `tasks`.
+        JSONArray up = o.optJSONArray("upcoming");
+        if (up == null) up = o.optJSONArray("tasks");
+        if (up != null && !m.privacy) {
+            for (int i = 0; i < up.length() && m.rows.size() < maxRows; i++) {
+                JSONObject t = up.optJSONObject(i);
                 if (t == null) continue;
+                if (t.optBoolean("done", false)) continue;          // rows show what's LEFT to do
                 String title = t.optString("title", "");
                 if (title.length() == 0) continue;
-                m.rows.add(new Row(t.optString("id", ""), title, t.optBoolean("done", false), t.optString("time", "")));
+                if (m.nextId != null && m.nextId.length() > 0 && m.nextId.equals(t.optString("id", "")))
+                    continue;                                        // never duplicate the focus task
+                m.rows.add(new Row(t.optString("id", ""), title, false, t.optString("time", ""), periodLabel(t.optString("period", null))));
             }
         }
         return m;
+    }
+
+    private static int clamp(int p) { return p < 0 ? 0 : (p > 100 ? 100 : p); }
+
+    // "المتبقي: العصر والمغرب" from remainingPeriods (canonical order); empty when unavailable.
+    private static String openPeriodsText(JSONObject o) {
+        JSONArray rp = o.optJSONArray("remainingPeriods");
+        if (rp == null || rp.length() == 0) return "";
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (int i = 0; i < rp.length(); i++) {
+            String lbl = periodLabel(rp.optString(i, null));
+            if (lbl.length() == 0) continue;
+            if (shown > 0) sb.append(" و");
+            sb.append(lbl);
+            shown++;
+        }
+        return shown == 0 ? "" : "المتبقي: " + sb;
+    }
+
+    // Calm, professional status cue — never childish, never a fake time claim.
+    private static String statusCue(int pct, int remaining, int total) {
+        if (pct >= 75) return "أتممت معظم يومك — تبقّى القليل";
+        if (remaining <= 2 && total > 2) return "ركّز على مهامك الأخيرة";
+        if (pct >= 40) return "أنت في منتصف يومك";
+        return "ابدأ بمهمتك التالية";
     }
 }

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Ayyam widget card: calm dark navy with a subtle top-down depth gradient and a soft edge. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#12161C" />
-    <corners android:radius="22dp" />
-    <stroke android:width="1dp" android:color="#22FFFFFF" />
+    <gradient android:startColor="#131922" android:endColor="#0B0E13" android:angle="270" />
+    <corners android:radius="26dp" />
+    <stroke android:width="1dp" android:color="#212A38" />
 </shape>

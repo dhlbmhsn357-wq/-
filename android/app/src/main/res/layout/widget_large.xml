@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ayyam widget — LARGE (tall). Same identity as medium but invests the extra height in a bigger NEXT
+     panel, a status strip, and up to four curated UPCOMING tasks (not a blunt list). RTL. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:layoutDirection="rtl"
+    android:background="@drawable/widget_bg"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+        <TextView
+            android:id="@+id/w_brand"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="أيام"
+            android:textColor="#E8B84B"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/w_date"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#9BA6B6"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="10dp">
+        <TextView
+            android:id="@+id/w_progress_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#F3EFE4"
+            android:textSize="13sp"
+            android:layout_marginStart="10dp" />
+        <ProgressBar
+            android:id="@+id/w_progress_bar"
+            style="@android:style/Widget.ProgressBar.Horizontal"
+            android:layout_width="0dp"
+            android:layout_height="6dp"
+            android:layout_weight="1"
+            android:max="100"
+            android:progressDrawable="@drawable/widget_progressbar" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/w_next_block"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/widget_next_bg"
+        android:padding="12dp"
+        android:layout_marginTop="12dp">
+        <View
+            android:layout_width="3dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/widget_accent_bar" />
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/w_next_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="التالي"
+                android:textColor="#9BA6B6"
+                android:textSize="11sp" />
+            <TextView
+                android:id="@+id/w_next_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:textColor="#F3EFE4"
+                android:textSize="17sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/w_next_time"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="1dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="#E8B84B"
+                android:textSize="12sp"
+                android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/w_message"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textColor="#F3EFE4"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/w_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="11dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="#C8D0DC"
+        android:textSize="13sp"
+        android:visibility="gone" />
+    <TextView
+        android:id="@+id/w_periods"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="#8A94A4"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
+    <TextView android:id="@+id/w_row0" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="9dp" android:maxLines="1" android:ellipsize="end" android:textColor="#AEB7C6" android:textSize="13sp" android:visibility="gone" />
+    <TextView android:id="@+id/w_row1" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:maxLines="1" android:ellipsize="end" android:textColor="#AEB7C6" android:textSize="13sp" android:visibility="gone" />
+    <TextView android:id="@+id/w_row2" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:maxLines="1" android:ellipsize="end" android:textColor="#AEB7C6" android:textSize="13sp" android:visibility="gone" />
+    <TextView android:id="@+id/w_row3" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:maxLines="1" android:ellipsize="end" android:textColor="#AEB7C6" android:textSize="13sp" android:visibility="gone" />
+
+    <Space android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="8dp">
+        <TextView
+            android:id="@+id/w_done"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#8A94A4"
+            android:textSize="12sp" />
+        <TextView
+            android:id="@+id/w_open"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="فتح ›"
+            android:textColor="#E8B84B"
+            android:textSize="13sp" />
+    </LinearLayout>
+</LinearLayout>

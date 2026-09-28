@@ -20,15 +20,16 @@ import java.util.Calendar;
 import java.util.Locale;
 
 /**
- * Read-only Ayyam home-screen widget (Phase D). Renders the last valid snapshot via WidgetRenderModel,
- * with stale-date / empty / all-done / no-snapshot states. Taps deep-link into the app (ayyam://today
- * [?task=id]). A daily (inexact) alarm flips the widget to "stale" at midnight without opening the app.
- * The widget never reads IndexedDB, never touches Supabase, and never writes app data.
+ * Read-only Ayyam home-screen widget. Renders the last valid snapshot via WidgetRenderModel as a small
+ * DAILY EXECUTION panel — progress, the NEXT (focus) task, a calm status, the open prayer periods, and a
+ * few upcoming tasks — across three real layouts (small/medium/large) chosen by the widget's size. Taps
+ * deep-link into the app (ayyam://today[?task=id]). A daily inexact alarm flips it to "stale" at midnight
+ * without opening the app. It never reads IndexedDB, never touches Supabase, and never writes app data.
  */
 public class AyyamWidgetProvider extends AppWidgetProvider {
 
     public static final String ACTION_MIDNIGHT = "com.ayyam.app.WIDGET_MIDNIGHT";
-    private static final int[] ROW_IDS = { R.id.w_row0, R.id.w_row1, R.id.w_row2, R.id.w_row3, R.id.w_row4 };
+    public enum Size { SMALL, MEDIUM, LARGE }
 
     private static String todayLocal() {
         return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Calendar.getInstance().getTime());
@@ -68,83 +69,146 @@ public class AyyamWidgetProvider extends AppWidgetProvider {
         return PendingIntent.getActivity(context, reqCode, i, flags);
     }
 
-    private int maxRowsFor(AppWidgetManager mgr, int id) {
+    private Size sizeFor(AppWidgetManager mgr, int id) {
         try {
             Bundle o = mgr.getAppWidgetOptions(id);
             int minH = o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0);
-            if (minH > 0 && minH < 90) return 0;      // ~4x1: header/progress/next only
-            if (minH >= 200) return 5;                // tall: more rows
-            return 3;                                  // 4x2 base
-        } catch (Exception e) { return 3; }
+            if (minH > 0 && minH < 100) return Size.SMALL;   // ~4x1
+            if (minH >= 200) return Size.LARGE;              // tall / 4x3+
+            return Size.MEDIUM;                              // ~4x2
+        } catch (Exception e) { return Size.MEDIUM; }
     }
+
+    private int maxRowsFor(Size s) { return s == Size.LARGE ? 4 : (s == Size.MEDIUM ? 1 : 0); }
 
     private void updateWidget(Context context, AppWidgetManager mgr, int id) {
-        mgr.updateAppWidget(id, buildRemoteViews(context, WidgetSnapshotStore.read(context), todayLocal(), maxRowsFor(mgr, id), id));
+        Size size = sizeFor(mgr, id);
+        mgr.updateAppWidget(id, buildRemoteViews(context, WidgetSnapshotStore.read(context), todayLocal(), size, id));
     }
 
-    /** Build the widget RemoteViews from a snapshot. Public so an instrumented test can inflate it
-     *  via RemoteViews.apply(...) and assert its content without a launcher. */
-    public RemoteViews buildRemoteViews(Context context, String snapshot, String today, int maxRows, int id) {
-        RemoteViews rv = new RemoteViews(context.getPackageName(), R.layout.widget_ayyam);
-        WidgetRenderModel m = WidgetRenderModel.from(snapshot, today, maxRows);
+    /** Build the widget RemoteViews from a snapshot. Public so an instrumented test can inflate it via
+     *  RemoteViews.apply(...) and assert its content (and render it to a bitmap) without a launcher. */
+    public RemoteViews buildRemoteViews(Context context, String snapshot, String today, Size size, int id) {
+        WidgetRenderModel m = WidgetRenderModel.from(snapshot, today, maxRowsFor(size));
+        int layout = size == Size.SMALL ? R.layout.widget_small
+                : (size == Size.LARGE ? R.layout.widget_large : R.layout.widget_medium);
+        RemoteViews rv = new RemoteViews(context.getPackageName(), layout);
+        if (size == Size.SMALL) bindSmall(context, rv, m, id);
+        else bindMediumLarge(context, rv, m, size, id);
 
-        rv.setTextViewText(R.id.w_date, m.dayLabel);
+        rv.setOnClickPendingIntent(R.id.widget_root, deepLink(context, "ayyam://today", id * 100 + 99));
+        rv.setContentDescription(R.id.widget_root, "أيام — " + (m.dayLabel.length() > 0 ? m.dayLabel : "مهام اليوم"));
+        return rv;
+    }
 
-        // reset dynamic views
-        rv.setViewVisibility(R.id.w_progress_row, View.GONE);
-        rv.setViewVisibility(R.id.w_message, View.GONE);
-        rv.setViewVisibility(R.id.w_next_block, View.GONE);
-        rv.setViewVisibility(R.id.w_next_time, View.GONE);
-        for (int r : ROW_IDS) rv.setViewVisibility(r, View.GONE);
+    // ---- SMALL (4x1): brand + count, thin bar, one focus line, فتح ----
+    private void bindSmall(Context ctx, RemoteViews rv, WidgetRenderModel m, int id) {
+        boolean normal = m.state == WidgetRenderModel.State.NORMAL;
+        boolean allDone = m.state == WidgetRenderModel.State.ALL_DONE;
 
+        rv.setViewVisibility(R.id.w_progress_text, m.showProgress ? View.VISIBLE : View.GONE);
+        rv.setViewVisibility(R.id.w_progress_bar, m.showProgress ? View.VISIBLE : View.GONE);
         if (m.showProgress) {
-            rv.setViewVisibility(R.id.w_progress_row, View.VISIBLE);
             rv.setTextViewText(R.id.w_progress_text, m.progressText);
             rv.setProgressBar(R.id.w_progress_bar, 100, m.progressPct, false);
         }
 
-        boolean showMessage = m.state == WidgetRenderModel.State.ALL_DONE
-                || m.state == WidgetRenderModel.State.EMPTY
-                || m.state == WidgetRenderModel.State.STALE
-                || m.state == WidgetRenderModel.State.NO_SNAPSHOT
-                || (m.privacy && m.message.length() > 0);
-        if (showMessage) {
+        if (normal) {
+            rv.setViewVisibility(R.id.w_message, View.GONE);
+            rv.setViewVisibility(R.id.w_next_title, View.VISIBLE);
+            String focus = m.privacy ? ("التالي: مخفي  ·  " + m.remainingText) : (m.showNext ? m.nextTitle : m.remainingText);
+            rv.setTextViewText(R.id.w_next_title, focus);
+            if (!m.privacy && m.nextId != null && m.nextId.length() > 0)
+                rv.setOnClickPendingIntent(R.id.w_next_title, deepLink(ctx, "ayyam://today?task=" + Uri.encode(m.nextId), id * 100 + 1));
+        } else {
+            rv.setViewVisibility(R.id.w_next_title, View.GONE);
             rv.setViewVisibility(R.id.w_message, View.VISIBLE);
-            rv.setTextViewText(R.id.w_message, m.message);
+            rv.setTextViewText(R.id.w_message, allDone ? WidgetRenderModel.MSG_ALL_DONE : m.message);
+        }
+        rv.setOnClickPendingIntent(R.id.w_open, deepLink(ctx, "ayyam://today", id * 100 + 2));
+        rv.setOnClickPendingIntent(R.id.w_brand, deepLink(ctx, "ayyam://today", id * 100));
+    }
+
+    private static final int[] ROW_IDS = { R.id.w_row0, R.id.w_row1, R.id.w_row2, R.id.w_row3 };
+
+    // ---- MEDIUM / LARGE: header, progress, next panel, status + periods, upcoming rows, footer ----
+    private void bindMediumLarge(Context ctx, RemoteViews rv, WidgetRenderModel m, Size size, int id) {
+        rv.setTextViewText(R.id.w_date, m.dayLabel);
+
+        // reset optional views
+        rv.setViewVisibility(R.id.w_next_block, View.GONE);
+        rv.setViewVisibility(R.id.w_next_time, View.GONE);
+        rv.setViewVisibility(R.id.w_message, View.GONE);
+        rv.setViewVisibility(R.id.w_status, View.GONE);
+        rv.setViewVisibility(R.id.w_periods, View.GONE);
+        rv.setViewVisibility(R.id.w_done, View.GONE);
+        int rowCount = size == Size.LARGE ? ROW_IDS.length : 1;
+        for (int i = 0; i < rowCount; i++) rv.setViewVisibility(ROW_IDS[i], View.GONE);
+
+        // progress
+        rv.setViewVisibility(R.id.w_progress_text, m.showProgress ? View.VISIBLE : View.GONE);
+        rv.setViewVisibility(R.id.w_progress_bar, m.showProgress ? View.VISIBLE : View.GONE);
+        if (m.showProgress) {
+            rv.setTextViewText(R.id.w_progress_text, m.progressText);
+            rv.setProgressBar(R.id.w_progress_bar, 100, m.progressPct, false);
         }
 
-        if (m.state == WidgetRenderModel.State.NORMAL && !m.privacy) {
-            if (m.showNext) {
-                rv.setViewVisibility(R.id.w_next_block, View.VISIBLE);
-                rv.setTextViewText(R.id.w_next_title, m.nextTitle);
+        boolean messageState = m.state == WidgetRenderModel.State.ALL_DONE
+                || m.state == WidgetRenderModel.State.EMPTY
+                || m.state == WidgetRenderModel.State.STALE
+                || m.state == WidgetRenderModel.State.NO_SNAPSHOT;
+
+        if (messageState) {
+            rv.setViewVisibility(R.id.w_message, View.VISIBLE);
+            rv.setTextViewText(R.id.w_message, m.message);
+            if (m.state == WidgetRenderModel.State.ALL_DONE) {
+                rv.setViewVisibility(R.id.w_done, View.VISIBLE);
+                rv.setTextViewText(R.id.w_done, m.doneText);
+            }
+        } else { // NORMAL (with or without privacy)
+            rv.setViewVisibility(R.id.w_next_block, View.VISIBLE);
+            String label = WidgetRenderModel.LABEL_NEXT + (m.nextPeriodLabel.length() > 0 ? "  ·  " + m.nextPeriodLabel : "");
+            rv.setTextViewText(R.id.w_next_label, label);
+            if (m.privacy) {
+                rv.setTextViewText(R.id.w_next_title, "مخفية");
+            } else {
+                rv.setTextViewText(R.id.w_next_title, m.showNext ? m.nextTitle : "");
                 if (m.nextTime != null && m.nextTime.length() > 0) {
                     rv.setViewVisibility(R.id.w_next_time, View.VISIBLE);
                     rv.setTextViewText(R.id.w_next_time, m.nextTime);
                 }
-                if (m.nextId != null && m.nextId.length() > 0) {
-                    rv.setOnClickPendingIntent(R.id.w_next_block,
-                            deepLink(context, "ayyam://today?task=" + Uri.encode(m.nextId), id * 100 + 1));
-                }
+                if (m.nextId != null && m.nextId.length() > 0)
+                    rv.setOnClickPendingIntent(R.id.w_next_block, deepLink(ctx, "ayyam://today?task=" + Uri.encode(m.nextId), id * 100 + 1));
             }
-            for (int i = 0; i < m.rows.size() && i < ROW_IDS.length; i++) {
-                WidgetRenderModel.Row row = m.rows.get(i);
-                String line = (row.done ? "✓ " : "○ ") + row.title + (row.time.length() > 0 ? "  ·  " + row.time : "");
-                rv.setViewVisibility(ROW_IDS[i], View.VISIBLE);
-                rv.setTextViewText(ROW_IDS[i], line);
-                rv.setInt(ROW_IDS[i], "setTextColor", row.done ? 0xFF6E7787 : 0xFFCFD6E4);
-                if (row.id != null && row.id.length() > 0) {
-                    rv.setOnClickPendingIntent(ROW_IDS[i],
-                            deepLink(context, "ayyam://today?task=" + Uri.encode(row.id), id * 100 + 10 + i));
+
+            // status + periods
+            String statusLine = m.privacy ? m.remainingText : m.statusText;
+            if (statusLine != null && statusLine.length() > 0) {
+                rv.setViewVisibility(R.id.w_status, View.VISIBLE);
+                rv.setTextViewText(R.id.w_status, statusLine);
+            }
+            if (m.periodsText != null && m.periodsText.length() > 0) {
+                rv.setViewVisibility(R.id.w_periods, View.VISIBLE);
+                rv.setTextViewText(R.id.w_periods, m.periodsText);
+            }
+            rv.setViewVisibility(R.id.w_done, View.VISIBLE);
+            rv.setTextViewText(R.id.w_done, m.doneText);
+
+            // upcoming rows (never under privacy — no titles)
+            if (!m.privacy) {
+                for (int i = 0; i < m.rows.size() && i < rowCount; i++) {
+                    WidgetRenderModel.Row row = m.rows.get(i);
+                    String line = "○  " + row.title + (row.time.length() > 0 ? "   ·  " + row.time : "");
+                    rv.setViewVisibility(ROW_IDS[i], View.VISIBLE);
+                    rv.setTextViewText(ROW_IDS[i], line);
+                    if (row.id != null && row.id.length() > 0)
+                        rv.setOnClickPendingIntent(ROW_IDS[i], deepLink(ctx, "ayyam://today?task=" + Uri.encode(row.id), id * 100 + 10 + i));
                 }
             }
         }
 
-        // Header / whole-widget tap → open Today.
-        rv.setOnClickPendingIntent(R.id.w_brand, deepLink(context, "ayyam://today", id * 100));
-        rv.setOnClickPendingIntent(R.id.widget_root, deepLink(context, "ayyam://today", id * 100 + 99));
-
-        rv.setContentDescription(R.id.widget_root, "أيام — " + (m.dayLabel.length() > 0 ? m.dayLabel : "مهام اليوم"));
-        return rv;
+        rv.setOnClickPendingIntent(R.id.w_brand, deepLink(ctx, "ayyam://today", id * 100));
+        rv.setOnClickPendingIntent(R.id.w_open, deepLink(ctx, "ayyam://today", id * 100 + 2));
     }
 
     private void scheduleMidnight(Context context) {

@@ -19,7 +19,7 @@ import org.junit.runner.RunWith;
 public class WidgetStoreValidationTest {
     private final Context ctx = ApplicationProvider.getApplicationContext();
     private static final String VALID =
-        "{\"schema\":1,\"date\":\"2026-09-27\",\"dayLabel\":\"الأحد\",\"done\":2,\"total\":3,\"tasks\":[]}";
+        "{\"schema\":2,\"date\":\"2026-09-27\",\"dayLabel\":\"الأحد\",\"done\":2,\"total\":3,\"tasks\":[]}";
 
     @Test
     public void savesValidSnapshot() {
@@ -47,7 +47,7 @@ public class WidgetStoreValidationTest {
     @Test
     public void rapid100UpdatesLandOnLast() {
         for (int i = 0; i < 100; i++) {
-            WidgetSnapshotStore.save(ctx, "{\"schema\":1,\"date\":\"2026-09-27\",\"done\":" + i + ",\"total\":100}");
+            WidgetSnapshotStore.save(ctx, "{\"schema\":2,\"date\":\"2026-09-27\",\"done\":" + i + ",\"total\":100}");
         }
         assertTrue(WidgetSnapshotStore.read(ctx).contains("\"done\":99"));
     }

@@ -77,6 +77,14 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: bash scripts/android-persistence.sh
+      - name: Upload widget screenshots (redesign visual review)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ayyam-widget-shots
+          path: widget-shots-out
+          retention-days: 14
+          if-no-files-found: ignore
 
   android-sync-e2e:
     name: android-sync-e2e

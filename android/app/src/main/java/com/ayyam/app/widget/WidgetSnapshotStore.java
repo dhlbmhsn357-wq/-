@@ -17,7 +17,7 @@ import org.json.JSONObject;
 public final class WidgetSnapshotStore {
     private static final String FILE = "ayyam_widget";
     private static final String KEY = "snapshot";
-    public static final int SCHEMA = 1;
+    public static final int SCHEMA = 2;
 
     private WidgetSnapshotStore() {}
 
