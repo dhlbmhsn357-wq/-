@@ -17,16 +17,18 @@ BASE=http://localhost:8799
 
 runtest() { # $1 = Class#method
   echo "== instrument: $1 =="
+  adb logcat -c 2>/dev/null || true
   local out
   out=$(adb shell am instrument -w -e class "$1" "$RUNNER" 2>&1)
   echo "$out"
-  if echo "$out" | grep -q "FAILURES!!!"; then echo "TEST FAILED: $1"; dump_backend; exit 1; fi
-  if ! echo "$out" | grep -qE "OK \("; then echo "TEST DID NOT REPORT OK: $1"; dump_backend; exit 1; fi
+  if echo "$out" | grep -q "FAILURES!!!"; then echo "TEST FAILED: $1"; dump_backend; dump_logcat; exit 1; fi
+  if ! echo "$out" | grep -qE "OK \("; then echo "TEST DID NOT REPORT OK: $1"; dump_backend; dump_logcat; exit 1; fi
 }
 peer() { echo "== peer: $* =="; node scripts/e2e-peer.mjs "$@" --base "$BASE" || { echo "PEER FAILED"; exit 1; }; }
 outage() { curl -sf -X POST "$BASE/__ctl/outage?mode=${1:-}" >/dev/null && echo "outage=${1:-off}"; }
 reset_backend() { curl -sf -X POST "$BASE/__ctl/reset" >/dev/null && echo "backend reset"; }
 dump_backend() { echo "---- backend log ----"; tail -40 /tmp/e2e-backend.log 2>/dev/null || true; echo "---- server state ----"; curl -s "$BASE/__ctl/db" | head -c 800 || true; echo; }
+dump_logcat() { echo "---- logcat (crash / app / chromium) ----"; adb logcat -d -t 400 2>/dev/null | grep -iE "AndroidRuntime|FATAL|ayyam|Capacitor|chromium|SecureStore|NotifBridge|WidgetBridge|E/|System.err" | tail -120 || true; echo "---- end logcat ----"; }
 wait_boot() {
   adb wait-for-device
   until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do sleep 2; done

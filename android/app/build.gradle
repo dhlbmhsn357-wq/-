@@ -47,11 +47,6 @@ dependencies {
 
 apply from: 'capacitor.build.gradle'
 
-try {
-    def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
-    }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
-}
+// Firebase/FCM is intentionally NOT used: Android notifications are on-device LOCAL reminders
+// (com.ayyam.app.notif). The Capacitor-default google-services apply block is removed so there is no
+// Firebase reference and no google-services.json is ever expected.

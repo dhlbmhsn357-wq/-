@@ -23,6 +23,8 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
       - name: Install JS deps
         run: npm ci
+      - name: Security scan (no Firebase/FCM, no secrets, release locked down)
+        run: bash scripts/security-scan.sh
       - name: Assemble web dir (native-only injection) + Capacitor sync
         run: |
           node scripts/build-webdir.mjs
