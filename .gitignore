@@ -13,3 +13,10 @@ www/
 android/app/src/main/assets/public/
 android/app/src/main/assets/capacitor.config.json
 android/app/src/main/assets/capacitor.plugins.json
+
+# Android release signing material — NEVER commit
+*.jks
+*.keystore
+keystore.properties
+android/keystore/
+**/keystore-credentials.txt

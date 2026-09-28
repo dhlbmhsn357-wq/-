@@ -16,10 +16,28 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Release signing is env-driven ONLY (keystore + passwords are NEVER committed; they come from CI
+    // secrets or a locally-generated keystore exported via AYYAM_RELEASE_* env vars). If the env is not
+    // set the release build stays unsigned (safe default) — nothing here embeds any credential.
+    signingConfigs {
+        release {
+            def ksFile = System.getenv('AYYAM_RELEASE_STORE_FILE')
+            if (ksFile) {
+                storeFile file(ksFile)
+                storePassword System.getenv('AYYAM_RELEASE_STORE_PASSWORD')
+                keyAlias System.getenv('AYYAM_RELEASE_KEY_ALIAS')
+                keyPassword System.getenv('AYYAM_RELEASE_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            debuggable false
+            if (System.getenv('AYYAM_RELEASE_STORE_FILE')) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
