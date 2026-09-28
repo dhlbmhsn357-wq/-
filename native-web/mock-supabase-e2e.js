@@ -9,6 +9,20 @@
 // unchanged; only the network target is swapped. The E2E build uses androidScheme=http so this
 // cleartext call to 10.0.2.2 is same-scheme (no mixed-content block); CORS is open on the backend.
 (function () {
+  // The E2E build runs over the http scheme (to avoid mixed content with the cleartext backend), which
+  // Android WebView does NOT treat as a secure context, so crypto.randomUUID is undefined and the app's
+  // op_id falls back to a non-UUID that the backend's p_op_id::uuid cast rejects (commits fail). The
+  // REAL app/APK uses the https scheme (secure context) where randomUUID exists, so this E2E-only
+  // polyfill just restores that production behavior — it does not change any sync logic.
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID !== 'function') {
+      crypto.randomUUID = function () {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (ch) {
+          var r = (Math.random() * 16) | 0; return (ch === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+        });
+      };
+    }
+  } catch (e) { /* leave app fallback in place */ }
   var BASE = 'http://10.0.2.2:8799';
   async function post(path, body) {
     var res = await fetch(BASE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

@@ -64,7 +64,7 @@ public final class NotifScheduler {
             JSONArray items = plan.getJSONArray("items");
             for (int i = 0; i < items.length(); i++) {
                 PendingIntent pi = fireIntent(c, items.getJSONObject(i), true);
-                if (pi != null) am.cancel(pi);
+                if (pi != null) { am.cancel(pi); pi.cancel(); } // cancel the alarm AND release the PendingIntent (no leak)
             }
         } catch (Exception ignored) {}
     }
