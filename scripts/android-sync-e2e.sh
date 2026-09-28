@@ -49,6 +49,11 @@ adb install -r "$TESTAPK"
 
 C=com.ayyam.app.SyncE2ETest
 TWEB="ويب-مهمة"   # must match SyncE2ETest.T_WEB
+stop_app() { adb shell am force-stop "$PKG" >/dev/null 2>&1; }
+# NOTE on isolation: the mock's /__ctl/outage is a GLOBAL backend outage, so the web-peer can only act
+# while it is OFF. That is fine because the Android app only syncs WHILE an instrument method runs — it
+# is not running between methods. So we: make Android edit under outage, force-stop it (no lingering
+# sync after we lift the outage), lift the outage, let the peer act, then relaunch Android to sync.
 
 echo "### Scenario 0: reset backend + seed Keystore device key"
 runtest "$C#t0_resetAndSeedKey"
@@ -56,32 +61,37 @@ runtest "$C#t0_resetAndSeedKey"
 echo "### Scenario 1: Android offline edit → reconnect → server receives → outbox clears"
 outage down
 runtest "$C#t1a_offlineEdit"
+stop_app
 outage ''            # back online
 runtest "$C#t1b_reconnectServerReceivesOutboxClears"
+stop_app
 
 echo "### Scenario 2: Web + Android multi-device → both changes persist"
-peer add "$TWEB"
+peer add "$TWEB"     # backend is up
 runtest "$C#t2_multiDeviceBothPersist"
+stop_app
 
 echo "### Scenario 3: Web delete + stale Android → delete wins (no resurrection)"
-outage down
-runtest "$C#t3a_holdStaleOffline"    # Android holds the stale copy offline
-peer delete "$TWEB"                  # web deletes while Android is offline
-outage ''
-runtest "$C#t3b_staleDeleteWins"
+runtest "$C#t3a_holdStaleOffline"    # Android is stale from t2: it still holds T_WEB (backend up, not deleted yet)
+stop_app
+peer delete "$TWEB"                  # web deletes; Android has not seen it yet (its app is not running)
+runtest "$C#t3b_staleDeleteWins"     # Android reconnects → tombstone wins → not resurrected
+stop_app
 
 echo "### Scenario 4: Web Reset + stale Android → epoch fence prevents resurrection"
 outage down
-runtest "$C#t4a_offlineEditBeforeReset"  # Android edits in the OLD generation, offline
-peer reset                                # web bumps the epoch (new generation)
+runtest "$C#t4a_offlineEditBeforeReset"  # Android queues an OLD-generation edit while offline
+stop_app                                  # ensure no lingering sync pushes it once the outage lifts
 outage ''
-runtest "$C#t4b_resetEpochFence"
+peer reset                                # web bumps the epoch (new generation) — Android app is not running
+runtest "$C#t4b_resetEpochFence"          # Android reconnects → adopts new epoch, parks the old edit
+stop_app
 
 echo "### Scenario 5: kill/reopen mid-pending → same op_id, sync resumes, no duplicate"
 outage down
 runtest "$C#t5a_offlineEditCaptureOpId"
 echo "-- kill the app while the edit is pending --"
-adb shell am force-stop "$PKG"
+stop_app
 outage ''
 runtest "$C#t5b_reopenResumesNoDuplicate"
 
