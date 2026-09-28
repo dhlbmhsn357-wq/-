@@ -40,6 +40,20 @@ const appTag = '<script src="js/app.js"></script>';
 if (!html.includes(appTag)) throw new Error('index.html: app.js script tag not found for injection');
 const inject = NATIVE_JS.map((f) => `<script src="js/${f}"></script>`).join('\n') + '\n' + appTag;
 html = html.replace(appTag, inject);
+
+// E2E build ONLY (AYYAM_E2E=1): swap the real @supabase CDN <script> for the E2E stand-in that talks
+// to the isolated backend at 10.0.2.2. Everything else (native scripts → NATIVE=true, the real device
+// key path) is unchanged, so the Android WebView sync E2E exercises the production client faithfully.
+// This branch never runs for the PWA or the shipped APK.
+if (process.env.AYYAM_E2E) {
+  const E2E_MOCK = 'mock-supabase-e2e.js';
+  cpSync(join(NATIVE_SRC, E2E_MOCK), join(WWW, 'js', E2E_MOCK));
+  const before = html;
+  html = html.replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/@supabase[\s\S]*?<\/script>/, `<script src="js/${E2E_MOCK}"></script>`);
+  if (html === before) throw new Error('AYYAM_E2E: @supabase CDN script tag not found for swap');
+  console.log('AYYAM_E2E: @supabase CDN → js/' + E2E_MOCK + ' (isolated backend @ 10.0.2.2)');
+}
+
 writeFileSync(indexPath, html);
 
 console.log(`www/ assembled: ${FILES.length} files + ${DIRS.join(',')} + native(${NATIVE_JS.join(',')})`);
