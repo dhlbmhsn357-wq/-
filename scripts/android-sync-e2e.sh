@@ -47,8 +47,42 @@ wait_boot
 adb install -r "$APK"
 adb install -r "$TESTAPK"
 
-echo "### G-1 smoke: Keystore key + online add reaches the isolated backend"
-reset_backend
-runtest 'com.ayyam.app.SyncE2ETest#smoke_keyThenOnlineAddReachesServer'
+C=com.ayyam.app.SyncE2ETest
+TWEB="ويب-مهمة"   # must match SyncE2ETest.T_WEB
 
-echo "ANDROID SYNC E2E (G-1 smoke) PASSED"
+echo "### Scenario 0: reset backend + seed Keystore device key"
+runtest "$C#t0_resetAndSeedKey"
+
+echo "### Scenario 1: Android offline edit → reconnect → server receives → outbox clears"
+outage down
+runtest "$C#t1a_offlineEdit"
+outage ''            # back online
+runtest "$C#t1b_reconnectServerReceivesOutboxClears"
+
+echo "### Scenario 2: Web + Android multi-device → both changes persist"
+peer add "$TWEB"
+runtest "$C#t2_multiDeviceBothPersist"
+
+echo "### Scenario 3: Web delete + stale Android → delete wins (no resurrection)"
+outage down
+runtest "$C#t3a_holdStaleOffline"    # Android holds the stale copy offline
+peer delete "$TWEB"                  # web deletes while Android is offline
+outage ''
+runtest "$C#t3b_staleDeleteWins"
+
+echo "### Scenario 4: Web Reset + stale Android → epoch fence prevents resurrection"
+outage down
+runtest "$C#t4a_offlineEditBeforeReset"  # Android edits in the OLD generation, offline
+peer reset                                # web bumps the epoch (new generation)
+outage ''
+runtest "$C#t4b_resetEpochFence"
+
+echo "### Scenario 5: kill/reopen mid-pending → same op_id, sync resumes, no duplicate"
+outage down
+runtest "$C#t5a_offlineEditCaptureOpId"
+echo "-- kill the app while the edit is pending --"
+adb shell am force-stop "$PKG"
+outage ''
+runtest "$C#t5b_reopenResumesNoDuplicate"
+
+echo "ALL 5 ANDROID SYNC SCENARIOS PASSED"
