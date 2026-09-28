@@ -37,7 +37,25 @@
     }
     return r;
   }
-  function defaultPrefs() { return { theme: 'night', bgOn: true, bgOpacity: 72, bgBlur: 0, location: null }; }
+  function defaultPrefs() { return { theme: 'night', bgOn: true, bgOpacity: 72, bgBlur: 0, location: null, dayTimezone: '' }; }
+
+  // Recurring-routine segment record (see js/routines-model.js). Sanitized here too so it survives the
+  // flatten/enrich/materialize round-trip; empty by default so existing data is untouched.
+  function cleanRoutine(raw, id) {
+    if (!isObj(raw)) return null;
+    const rid = typeof raw.id === 'string' && raw.id ? raw.id : (typeof id === 'string' ? id : '');
+    if (!rid) return null;
+    const r = isObj(raw.rec) ? raw.rec : {};
+    const freq = (r.freq === 'once' || r.freq === 'daily' || r.freq === 'weekly') ? r.freq : 'weekly';
+    const rec = { freq, from: DATE_KEY_RE.test(r.from) ? r.from : '0000-00-00', to: DATE_KEY_RE.test(r.to) ? r.to : null };
+    if (freq === 'weekly') rec.days = Array.from(new Set(Array.isArray(r.days) ? r.days.filter((x) => DAY_CODES.includes(x)) : []));
+    else if (freq === 'once') rec.on = DATE_KEY_RE.test(r.on) ? r.on : null;
+    return { id: rid, seriesId: typeof raw.seriesId === 'string' && raw.seriesId ? raw.seriesId : rid,
+      title: typeof raw.title === 'string' ? raw.title : String(raw.title == null ? '' : raw.title),
+      time: typeof raw.time === 'string' ? raw.time : '', period: PERIODS.has(raw.period) ? raw.period : null,
+      order: Number.isFinite(raw.order) ? raw.order : 0, rec };
+  }
+  function cleanRoutines(map) { const out = {}; if (isObj(map)) for (const k of Object.keys(map)) { const r = cleanRoutine(map[k], k); if (r) out[r.id] = r; } return out; }
   function emptyTemplate() { const t = {}; DAY_CODES.forEach((c) => (t[c] = [])); return t; }
 
   function cleanLocation(l) {
@@ -61,12 +79,15 @@
     const d = defaultPrefs();
     const num = (v, min, max, def) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def);
     const prefs = { theme: p.theme === 'day' ? 'day' : 'night', bgOn: typeof p.bgOn === 'boolean' ? p.bgOn : d.bgOn,
-                    bgOpacity: num(p.bgOpacity, 30, 95, d.bgOpacity), bgBlur: num(p.bgBlur, 0, 10, d.bgBlur), location: cleanLocation(p.location) };
+                    bgOpacity: num(p.bgOpacity, 30, 95, d.bgOpacity), bgBlur: num(p.bgBlur, 0, 10, d.bgBlur), location: cleanLocation(p.location),
+                    dayTimezone: typeof p.dayTimezone === 'string' ? p.dayTimezone : '' };
     const a = isObj(src.tplArchive) ? src.tplArchive : {};
     const tplArchive = { since: typeof a.since === 'string' && DATE_KEY_RE.test(a.since) ? a.since : '0000-00-00',
       versions: Array.isArray(a.versions) ? a.versions.filter((v) => isObj(v) && typeof v.id === 'string' && DATE_KEY_RE.test(v.id))
         .map((v) => ({ id: v.id, template: (function () { const t = {}; DAY_CODES.forEach((c) => (t[c] = cleanList(isObj(v.template) ? v.template[c] : null).map(strip))); return t; })() })) : [] };
-    return { template, logs, prefs, tplArchive };
+    const routines = cleanRoutines(src.routines);
+    const migrationDate = DATE_KEY_RE.test(src.migrationDate) ? src.migrationDate : '';
+    return { template, logs, prefs, tplArchive, routines, migrationDate };
   }
   const strip = (t) => ({ id: t.id, title: t.title, time: t.time, period: t.period }); // drop _order for archive equality
 
@@ -76,7 +97,7 @@
   function flatten(mat) {
     const out = {}; // key -> value
     const p = mat.prefs;
-    out['p:theme'] = p.theme; out['p:bgOn'] = p.bgOn; out['p:bgOpacity'] = p.bgOpacity; out['p:bgBlur'] = p.bgBlur; out['p:location'] = p.location;
+    out['p:theme'] = p.theme; out['p:bgOn'] = p.bgOn; out['p:bgOpacity'] = p.bgOpacity; out['p:bgBlur'] = p.bgBlur; out['p:location'] = p.location; out['p:dayTimezone'] = p.dayTimezone;
     for (const day of Object.keys(mat.logs)) {
       const l = mat.logs[day];
       for (const id of Object.keys(l.done)) if (l.done[id] === true) out[`g:${day}:done:${id}`] = true;
@@ -86,6 +107,9 @@
     }
     for (const dc of DAY_CODES) mat.template[dc].forEach((t, i) => (out[`m:${dc}:${t.id}`] = { title: t.title, time: t.time, period: t.period, order: i }));
     out['arch'] = mat.tplArchive;
+    // routine segments (r:<id>, whole-object leaf) + migration fence date (migd). Empty by default.
+    for (const id of Object.keys(mat.routines || {})) out[`r:${id}`] = mat.routines[id];
+    if (mat.migrationDate) out['migd'] = mat.migrationDate;
     return out;
   }
 
@@ -132,7 +156,7 @@
 
   // ---------- materialize: enriched → bundle the app renders ----------
   function materialize(en) {
-    const mat = { template: emptyTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: '0000-00-00', versions: [] } };
+    const mat = { template: emptyTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: '0000-00-00', versions: [] }, routines: {}, migrationDate: '' };
     const ensureDay = (d) => (mat.logs[d] || (mat.logs[d] = { done: {}, extra: [], hidden: {}, overrides: {} }));
     const extras = {}; // day -> [{order, task}]
     const tpl = {};    // dayCode -> [{order, task}]
@@ -141,6 +165,8 @@
       const val = en.reg[key].val;
       if (key.startsWith('p:')) { const f = key.slice(2); mat.prefs[f] = val; continue; }
       if (key === 'arch') { mat.tplArchive = val; continue; }
+      if (key === 'migd') { mat.migrationDate = val; continue; }
+      if (key.startsWith('r:')) { mat.routines[key.slice(2)] = val; continue; }
       const parts = key.split(':');
       if (parts[0] === 'g') {
         const [, day, kind, id] = parts;

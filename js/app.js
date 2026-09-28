@@ -234,7 +234,7 @@
     }
   }
 
-  function defaultPrefs(){ return {theme:'night', bgOn:true, bgOpacity:72, bgBlur:0, location:null}; }
+  function defaultPrefs(){ return {theme:'night', bgOn:true, bgOpacity:72, bgBlur:0, location:null, dayTimezone:''}; }
 
   // ---------- data validation ----------
   // Everything read from the server or localStorage goes through here, so a single bad
@@ -313,8 +313,13 @@
       bgOpacity: num(p.bgOpacity, 30, 95, d.bgOpacity),
       bgBlur: num(p.bgBlur, 0, 10, d.bgBlur),
       location: cleanLocation(p.location),
+      dayTimezone: typeof p.dayTimezone==='string' ? p.dayTimezone : '',
     };
-    return {template, logs, prefs, tplArchive};
+    // Recurrence engine state (dormant until R2 activation): carried through so nothing is lost on
+    // load/import/export/round-trip. cleanRoutines mirrors js/routines-model.js.
+    const routines = (window.AyyamRoutines ? window.AyyamRoutines.cleanRoutines(src.routines) : {});
+    const migrationDate = DATE_KEY_RE.test(src.migrationDate) ? src.migrationDate : '';
+    return {template, logs, prefs, tplArchive, routines, migrationDate};
   }
 
   // The v2 conflict engine lives in js/sync-model.js (LWW registers + tombstones + epoch). The old
@@ -326,8 +331,8 @@
       .finally(()=> clearTimeout(t));
   }
   const clone = o => JSON.parse(JSON.stringify(o));
-  function currentBundle(){ return {template, logs, prefs, tplArchive}; }
-  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; }
+  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, migrationDate}; }
+  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; migrationDate = s.migrationDate || ''; }
 
   // Applies a merged/adopted enriched value to the visible state and refreshes the view.
   async function adoptEnriched(en, persist){
@@ -528,6 +533,10 @@
   let logs = {};
   let prefs = defaultPrefs();
   let tplArchive = { since: EPOCH_KEY, versions: [] };
+  // Recurrence engine state — DORMANT in R1 (empty => runtime behaves byte-identically to today).
+  // R2 will run AyyamRoutines.migrate() on load and route tasksForDate through the routines engine.
+  let routines = {};
+  let migrationDate = '';
 
   // The template in effect on a given date. Editing the template only changes today and later;
   // past days keep the version that was active back then (see beginTemplateEdit).
@@ -1547,6 +1556,8 @@
     template = defaultTemplate();
     logs = {};
     tplArchive = { since: EPOCH_KEY, versions: [] };
+    routines = {};
+    migrationDate = '';
     saveBundle('reset'); // new generation: a stale offline device can't bring the old data back
     renderTplDays();
     renderTplTasks();
