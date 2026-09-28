@@ -98,6 +98,14 @@ public class SyncE2ETest {
             String isNative = runJs(s, "(typeof AyyamNative!=='undefined' && AyyamNative.isNativeAndroid && AyyamNative.isNativeAndroid())+''");
             assertTrue("AyyamNative must be present (NATIVE=true) in the E2E build, got=" + isNative, "true".equals(isNative.replace("\"", "")));
 
+            // Gate: the WebVIEW itself (not just the test process) must reach the backend RPC over the
+            // http scheme. Isolates network (cleartext/CORS/reachability) from app-side sync logic.
+            String rpc = probe(s,
+                "fetch('" + BACKEND + "/rpc',{method:'POST',headers:{'Content-Type':'application/json'},"
+              + "body:JSON.stringify({fn:'ayyam_pull',args:{p_key:'" + KEY + "'}})}).then(function(r){return r.json();})"
+              + ".then(function(j){window.__probe='RPC:'+JSON.stringify(j);}).catch(function(e){window.__probe='FETCH-ERR:'+e;});", 20);
+            assertTrue("WebView must reach the backend RPC (network/cleartext/CORS), got: " + rpc, rpc.replace("\\", "").contains("\"status\":\"ok\""));
+
             // 2) Seed the device key into the Android Keystore via the real bridge; assert it persisted there.
             String set = probe(s, "AyyamNative.setKey('" + KEY + "').then(function(r){window.__probe=JSON.stringify(r);});", 20);
             String setClean = set.replace("\\", "");
@@ -119,7 +127,9 @@ public class SyncE2ETest {
                 20);
             assertTrue("add-task UI drive failed: " + added, added.contains("added"));
 
-            String drained = probe(s, outboxDrainJs(), 40);
+            // Nudge the app's own sync triggers (online/focus) so it does not wait on a debounce/interval.
+            probe(s, "window.dispatchEvent(new Event('online'));window.dispatchEvent(new Event('focus'));window.__probe='nudged';", 5);
+            String drained = probe(s, outboxDrainJs(), 60);
             assertTrue("outbox did not drain (online sync), got: " + drained, drained.contains("SYNCED"));
         }
 
