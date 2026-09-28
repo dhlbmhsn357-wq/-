@@ -55,6 +55,22 @@ stop_app() { adb shell am force-stop "$PKG" >/dev/null 2>&1; }
 # is not running between methods. So we: make Android edit under outage, force-stop it (no lingering
 # sync after we lift the outage), lift the outage, let the peer act, then relaunch Android to sync.
 
+KEY="e2e-device-key-0123456789abcdef"   # must match SyncE2ETest.KEY / tests/e2e/server.mjs
+assert_no_key_in_logs() {
+  if adb logcat -d 2>/dev/null | grep -F "$KEY" >/dev/null; then echo "FAIL: device key value leaked into logcat"; exit 1; fi
+  echo "ok: device key not present in logs"
+}
+
+echo "### Device-key gate regression (fresh install → enter key → gate gone; wrong key → re-prompt)"
+runtest "$C#tKeyEnterWithInvisibleCharsAccepted"   # correct key wrapped in bidi/zero-width marks → accepted
+stop_app
+runtest "$C#tKeyReopenPersistsNoPrompt"            # force-stop + reopen → key persists, no prompt
+stop_app
+runtest "$C#tKeyClearKey"                          # clear the stored key
+stop_app
+runtest "$C#tKeyWrongReprompts"                    # wrong key → gate returns (no silent pass)
+stop_app
+
 echo "### Scenario 0: reset backend + seed Keystore device key"
 runtest "$C#t0_resetAndSeedKey"
 
@@ -63,7 +79,9 @@ outage down
 runtest "$C#t1a_offlineEdit"
 stop_app
 outage ''            # back online
+adb logcat -c 2>/dev/null || true    # clear, then a real app sync happens in t1b (key sent over the network, never logged)
 runtest "$C#t1b_reconnectServerReceivesOutboxClears"
+assert_no_key_in_logs
 stop_app
 
 echo "### Scenario 2: Web + Android multi-device → both changes persist"

@@ -231,7 +231,72 @@ public class SyncE2ETest {
         assertTrue("the killed-mid-sync edit must appear EXACTLY ONCE (idempotent op_id, no duplicate)", countOccurrences(db, T_S5) == 1);
     }
 
+    // ===== Device-key gate regression (the release bug: correct key re-prompted on Android) =====
+    // A fresh device shows the gate; entering the CORRECT key WRAPPED in bidi/zero-width marks (as an
+    // Android RTL keyboard / clipboard injects) must be sanitized, accepted, and make the gate vanish and
+    // stay gone — with the in-memory cache populated immediately. Without the sanitize fix the wrapped key
+    // is rejected as unauthorized and the gate returns (the reported bug).
+    @Test
+    public void tKeyEnterWithInvisibleCharsAccepted() throws Exception {
+        String reset = http("POST", "/__ctl/reset");
+        assertTrue("reset ok: " + reset, reset.contains("\"ok\":true"));
+        try (ActivityScenario<MainActivity> s = launch()) {
+            assertTrue("fresh install with no key must show the key gate", waitGate(s, true, 12));
+            String rawExpr = "('\\u200F'+" + jsStr(KEY) + "+'\\u200E\\uFEFF')"; // correct key + invisible marks
+            String clicked = probe(s, "window.prompt=function(){return " + rawExpr + ";};"
+                + "var b=document.getElementById('startupKey'); if(!b){window.__probe='NO-BTN';return;} b.click(); window.__probe='clicked';", 10);
+            assertTrue("startup key entry drive failed: " + clicked, clicked.contains("clicked"));
+            String cached = runJs(s, "(typeof AyyamNative!=='undefined' && AyyamNative.getKeyCached().length>0)+''");
+            assertTrue("cache must be populated immediately after entry (set→immediate get), got=" + cached, "true".equals(cached.replace("\"", "")));
+            assertTrue("gate must DISAPPEAR after a correct key (invisible chars stripped)", waitGate(s, false, 24));
+            Thread.sleep(2500);
+            assertTrue("gate must NOT reappear", waitGate(s, false, 4));
+        }
+    }
+
+    // force-stop → reopen: the key persists (Keystore) and the gate does not reappear. Bash force-stops first.
+    @Test
+    public void tKeyReopenPersistsNoPrompt() throws Exception {
+        try (ActivityScenario<MainActivity> s = launch()) {
+            assertHasKey(s);
+            assertTrue("after force-stop + reopen the key persists → no key gate", waitGate(s, false, 12));
+        }
+    }
+
+    // Clear the stored key (so the wrong-key test starts fresh). Also proves clear is immediate.
+    @Test
+    public void tKeyClearKey() throws Exception {
+        try (ActivityScenario<MainActivity> s = launch()) {
+            String r = probe(s, "AyyamNative.setKey('').then(function(){window.__probe='cleared';});", 15);
+            assertTrue("key clear failed: " + r, r.contains("cleared"));
+            String cached = runJs(s, "(AyyamNative.getKeyCached().length===0)+''");
+            assertTrue("key must be empty after clear, got=" + cached, "true".equals(cached.replace("\"", "")));
+        }
+    }
+
+    // A WRONG key must be rejected (server unauthorized) and the gate must return — never silently pass.
+    @Test
+    public void tKeyWrongReprompts() throws Exception {
+        try (ActivityScenario<MainActivity> s = launch()) {
+            assertTrue("no key → gate shown", waitGate(s, true, 12));
+            String wrong = "wrong-key-000000000000000"; // 25 chars: valid length, NOT the registered key
+            String clicked = probe(s, "window.prompt=function(){return " + jsStr(wrong) + ";};"
+                + "document.getElementById('startupKey').click(); window.__probe='clicked';", 10);
+            assertTrue("wrong-key entry drive failed: " + clicked, clicked.contains("clicked"));
+            assertTrue("a wrong key must keep/return the gate (correct re-prompt), not pass", waitGate(s, true, 20));
+        }
+    }
+
     // ---- shared step helpers ----
+    // Poll the startup key-gate visibility until it matches wantShown (or timeout).
+    private boolean waitGate(ActivityScenario<MainActivity> s, boolean wantShown, int maxPolls) throws Exception {
+        for (int i = 0; i < maxPolls; i++) {
+            String g = probe(s, "var e=document.getElementById('startupState');window.__probe=(e&&!e.classList.contains('hidden'))?'SHOWN':'HIDDEN';", 6);
+            if (g.contains("SHOWN") == wantShown) return true;
+            Thread.sleep(700);
+        }
+        return false;
+    }
     private void assertHasKey(ActivityScenario<MainActivity> s) throws Exception {
         String key = runJs(s, "(typeof AyyamNative!=='undefined'? (AyyamNative.getKeyCached()? 'has-key':'no-key') : 'no-native')");
         assertTrue("device key must hydrate from Keystore, got=" + key, key.contains("has-key"));

@@ -359,15 +359,35 @@
     try{ k ? localStorage.setItem(LS_DEVICE_KEY, k) : localStorage.removeItem(LS_DEVICE_KEY); }catch(e){}
   }
   let needsKey = false; // true when the server rejected our key (or none set) and we have changes to sync
-  // Entered once per device, kept only in this device's localStorage. Never shown elsewhere or logged.
+  // Non-sensitive key-entry diagnostics (NEVER the key itself): lengths + whether cleaning changed it +
+  // the last pull outcome for the key path. Surfaced in the diagnostics screen to explain a re-prompt.
+  let keyDiag = { rawLen: 0, cleanLen: 0, changed: false, pull: '—' };
+  // Remove bidi / zero-width / format-control characters that String.trim() does NOT strip. Android soft
+  // keyboards and clipboard (especially in an RTL context) can inject these around a pasted key, so the
+  // CORRECT key would be sent WITH invisible characters and rejected by the server as unauthorized — an
+  // endless re-prompt. Desktop-web paste was clean, which is why this only bit the Android build.
+  function sanitizeKey(raw){
+    if(typeof raw !== 'string') return '';
+    return raw.replace(/[​-‏؜‪-‮⁦-⁩﻿ ]/g, '').trim();
+  }
+  // Single entry point for submitting a device key: sanitize → validate length → store (setDeviceKey
+  // updates the in-memory cache synchronously). Returns true iff accepted. Never logs the key value.
+  function submitDeviceKey(raw){
+    const key = sanitizeKey(raw);
+    keyDiag.rawLen = (typeof raw === 'string' ? raw.length : 0);
+    keyDiag.cleanLen = key.length;
+    keyDiag.changed = (typeof raw === 'string' && raw !== key);
+    if(store) store.logDiag({ type:'key-entry', rawLen: keyDiag.rawLen, cleanLen: keyDiag.cleanLen, changed: keyDiag.changed }); // no key value, ever
+    if(key.length < 16){ alert('المفتاح قصير جدًا. انسخه كما هو من جهازك الآخر.'); return false; }
+    setDeviceKey(key);
+    needsKey = false;
+    return true;
+  }
+  // Entered once per device, kept only on this device (Keystore on Android, localStorage on web). Never shown/logged.
   function promptForKey(){
     const k = window.prompt('مفتاح المزامنة (يُدخل مرة واحدة على هذا الجهاز لحماية بياناتك):', '');
     if(k === null) return;
-    const key = k.trim();
-    if(key.length < 16){ alert('المفتاح قصير جدًا. انسخه كما هو من جهازك الآخر.'); return; }
-    setDeviceKey(key);
-    needsKey = false;
-    syncNow();
+    if(submitDeviceKey(k)) syncNow();
   }
 
   async function rpc(fn, args){
@@ -1163,6 +1183,7 @@
       'عناصر الاسترجاع: ' + toArabicNum(recovery),
       'الإشعارات: ' + (pushActive ? 'مفعّلة' : 'غير مفعّلة'),
       'مفتاح المزامنة: ' + (getDeviceKey() ? 'مُدخل' : 'غير مُدخل'),
+      ...(keyDiag.rawLen ? ['تشخيص إدخال المفتاح: طول=' + toArabicNum(keyDiag.cleanLen) + (keyDiag.changed ? ' (أُزيلت أحرف خفية من ' + toArabicNum(keyDiag.rawLen) + ')' : '') + ' · الجلب: ' + keyDiag.pull] : []),
       'التخزين المحلي: ' + (storageDegraded ? 'محدود (بدون قاعدة بيانات)' : (store && store.newerSchema ? 'إصدار أحدث — يُنصح بتحديث التطبيق' : 'سليم')),
       'الوضع المحلي فقط: ' + (localOnly ? 'نعم' : 'لا'),
       'معرّف الجهاز: ' + (DEVICE_ID ? DEVICE_ID.slice(0,8) : '—'),
@@ -1726,7 +1747,8 @@
     if(!M || !sb) return 'unreachable';
     try{
       const pull = await rpc('ayyam_pull', { p_key: key });
-      if(pull.status === 'unauthorized'){ setDeviceKey(''); return 'need-key'; }
+      if(pull.status === 'unauthorized'){ keyDiag.pull='unauthorized'; setDeviceKey(''); return 'need-key'; }
+      keyDiag.pull = 'ready';
       if(pull.exists){
         const serverEn = M.toEnriched(pull.data, 1);
         await adoptEnriched(serverEn, true);
@@ -1735,7 +1757,7 @@
         return 'ready';
       }
       return 'empty';
-    }catch(e){ return 'unreachable'; }
+    }catch(e){ keyDiag.pull='network'; return 'unreachable'; }
   }
 
   // The first-load overlay: distinct, honest states (never defaults-as-data on an uncertain server).
@@ -1770,8 +1792,7 @@
   $('startupKey').addEventListener('click', ()=>{
     const k = window.prompt('مفتاح المزامنة (يُدخل مرة واحدة على هذا الجهاز):','');
     if(k===null) return;
-    if(k.trim().length<16){ alert('المفتاح قصير جدًا.'); return; }
-    setDeviceKey(k.trim()); needsKey=false;
+    if(!submitDeviceKey(k)) return;
     if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad();
   });
   $('startupOffline').addEventListener('click', async ()=>{
