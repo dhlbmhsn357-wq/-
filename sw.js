@@ -18,7 +18,7 @@ const RUNTIME_MAX = 60; // bounded so the runtime cache can't grow without limit
 const PRECACHE = [
   './', 'index.html',
   'css/app.css',
-  'js/app.js', 'js/storage.js', 'js/sync-model.js', 'js/time-model.js', 'js/routines-model.js',
+  'js/app.js', 'js/storage.js', 'js/sync-model.js', 'js/time-model.js', 'js/routines-model.js', 'js/analytics-model.js',
   'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'bg.jpg',
 ];
