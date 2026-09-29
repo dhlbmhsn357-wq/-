@@ -42,8 +42,17 @@
     return { lat, lng, tz: typeof l.tz === 'string' && l.tz ? l.tz : DEFAULT_LOC.tz };
   }
 
-  // Tasks for a weekday from the materialized state (template + that date's log). Mirrors tasksForDay.
+  // Tasks for a date. Post-R2 the recurrence engine is the source of truth (routine-aware); the
+  // scheduler stays dumb — it only consumes materialized tasks, it never resolves recurrence itself.
+  // Falls back to the inline legacy template path only when the engine is not loaded.
   function tasksFor(state, key, code) {
+    if (global.AyyamRoutines && typeof global.AyyamRoutines.tasksForDate === 'function') {
+      return global.AyyamRoutines.tasksForDate(state, key)
+        // Don't remind about an excused or replaced-original occurrence; a replacement occurrence (status
+        // pending/completed) stays, so the reminder is for what the user actually intends to do.
+        .filter((t) => t.status !== 'excused' && t.status !== 'replaced')
+        .map((t) => ({ title: String(t.title || ''), period: PERIOD_KEYS.includes(t.period) ? t.period : null, done: t.done === true }));
+    }
     const log = (isObj(state.logs) && isObj(state.logs[key])) ? state.logs[key] : {};
     const done = isObj(log.done) ? log.done : {}, hidden = isObj(log.hidden) ? log.hidden : {};
     const overrides = isObj(log.overrides) ? log.overrides : {}, extra = Array.isArray(log.extra) ? log.extra : [];
