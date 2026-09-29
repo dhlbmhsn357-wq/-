@@ -59,6 +59,7 @@
       </div>
       <button class="icon-btn hidden" id="installBtn" aria-label="تثبيت التطبيق">⬇</button>
       <button class="icon-btn hidden" id="notifyBtn" aria-label="تفعيل الإشعارات">🔔</button>
+      <button class="icon-btn" id="openCalendar" aria-label="التقويم الشهري">🗓</button>
       <button class="icon-btn" id="openReports" aria-label="التقارير">📊</button>
       <button class="icon-btn" id="openSettings" aria-label="القالب الأسبوعي">⚙</button>
     </div>
@@ -255,6 +256,44 @@
       <h3>الأكثر تفويتًا</h3>
       <p class="report-hint">الأيام المكتملة فقط، لا يشمل اليوم الحالي</p>
       <div id="reportMissedTasks" class="period-report"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Calendar month view -->
+<div id="calendarView" class="hidden">
+  <header class="top">
+    <button class="back-btn" id="closeCalendar">› رجوع</button>
+    <span class="brand brand-strong">التقويم</span>
+  </header>
+  <div class="wrap">
+    <div class="cal-head">
+      <button class="icon-btn" id="calPrev" aria-label="الشهر السابق">›</button>
+      <div class="cal-title" id="calTitle">—</div>
+      <button class="icon-btn" id="calNext" aria-label="الشهر التالي">‹</button>
+    </div>
+    <button class="cal-today-btn hidden" id="calToday">العودة لهذا الشهر</button>
+
+    <div class="cal-weekdays" id="calWeekdays" aria-hidden="true"></div>
+    <div class="cal-grid" id="calGrid" role="grid" aria-label="أيام الشهر"></div>
+
+    <div class="cal-legend" id="calLegend"></div>
+
+    <div class="report-card cal-summary" id="calSummary"></div>
+  </div>
+</div>
+
+<!-- Daily overview bottom sheet -->
+<div class="overlay" id="dayOverlay">
+  <div class="sheet day-sheet" role="dialog" aria-modal="true" aria-labelledby="daySheetTitle">
+    <div class="day-sheet-head">
+      <button class="icon-btn" id="dayPrev" aria-label="اليوم السابق">›</button>
+      <h2 id="daySheetTitle">—</h2>
+      <button class="icon-btn" id="dayNext" aria-label="اليوم التالي">‹</button>
+    </div>
+    <div id="dayBody"></div>
+    <div class="sheet-actions">
+      <button class="btn ghost" id="dayClose">إغلاق</button>
     </div>
   </div>
 </div>

@@ -774,9 +774,12 @@
     try{
       const add = $('addOverlay');
       if(add && add.classList.contains('show')){ closeAddSheet(); return; }        // 1. open sheet
-      if($('settingsView') && !$('settingsView').classList.contains('hidden')){ closeSettings(); return; } // 2. settings
-      if($('reportsView') && !$('reportsView').classList.contains('hidden')){ closeReports(); return; }     // 3. reports
-      AyyamNative.exitApp();                                                        // 4. nothing → exit
+      const dayOv = $('dayOverlay');
+      if(dayOv && dayOv.classList.contains('show')){ closeDayOverview(); return; } // 2. daily overview
+      if($('settingsView') && !$('settingsView').classList.contains('hidden')){ closeSettings(); return; } // 3. settings
+      if($('reportsView') && !$('reportsView').classList.contains('hidden')){ closeReports(); return; }     // 4. reports
+      if($('calendarView') && !$('calendarView').classList.contains('hidden')){ closeCalendar(); return; }  // 5. calendar
+      AyyamNative.exitApp();                                                        // 6. nothing → exit
     }catch(e){ try{ AyyamNative.exitApp(); }catch(_){} }
   }
   // Native Android reminders: user-initiated (🔔). Request POST_NOTIFICATIONS (13+) then schedule the
@@ -1549,6 +1552,137 @@
     $('mainView').classList.remove('hidden');
     $('fabAdd').classList.remove('hidden');
   }
+
+  // ---------- calendar month view (C1) — pure render over AyyamAnalytics; NO analytics logic here ----------
+  const MONTH_NAMES = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  const monthName = (m)=> MONTH_NAMES[m-1] || '';
+  let calYear = 2026, calMonth = 1, dayOverviewKey = null;
+  const AN = ()=> window.AyyamAnalytics;
+
+  function openCalendar(){
+    const tk = todayKey(); calYear = Number(tk.slice(0,4)); calMonth = Number(tk.slice(5,7));
+    $('mainView').classList.add('hidden');
+    $('calendarView').classList.remove('hidden');
+    $('fabAdd').classList.add('hidden');
+    renderCalWeekdays(); renderCalLegend(); renderCalendar();
+  }
+  function closeCalendar(){
+    $('calendarView').classList.add('hidden');
+    $('mainView').classList.remove('hidden');
+    $('fabAdd').classList.remove('hidden');
+  }
+  function calShift(delta){
+    let m = calMonth + delta, y = calYear;
+    while(m < 1){ m += 12; y--; } while(m > 12){ m -= 12; y++; }
+    calMonth = m; calYear = y; renderCalendar();
+  }
+  function renderCalWeekdays(){
+    const el = $('calWeekdays'); el.innerHTML = '';
+    DAY_CODES.forEach(c=>{ const s = document.createElement('span'); s.textContent = DAY_LABELS_SHORT[c]; el.appendChild(s); });
+  }
+  function renderCalLegend(){
+    const el = $('calLegend'); el.innerHTML = '';
+    [['high','مرتفع'],['medium','متوسط'],['low','منخفض'],['unrecorded','بدون تسجيل']].forEach(([k,l])=>{
+      const d = document.createElement('div'); d.className = 'lg'; d.innerHTML = `<span class="cal-dot ${k}"></span>${l}`; el.appendChild(d);
+    });
+  }
+  function calCellAria(s, dnum, isToday, isFuture){
+    const dstr = toArabicNum(dnum)+' '+monthName(calMonth);
+    if(isFuture) return dstr+' — يوم قادم';
+    if(s.state==='no_expected') return dstr+' — لا مهام';
+    if(s.state==='unrecorded') return dstr+' — بدون تسجيل';
+    const counts = ` — ${toArabicNum(s.completed)} من ${toArabicNum(s.expected)}`;
+    if(isToday) return dstr+' — اليوم'+counts;
+    const cls = AN().classify(s);
+    const label = cls==='high'?'التزام مرتفع':cls==='medium'?'التزام متوسط':'التزام منخفض';
+    return dstr+' — '+label+counts;
+  }
+  function renderCalendar(){
+    const A = AN(); const tk = todayKey();
+    const m = A.monthSummary(currentBundle(), calYear, calMonth, { today: tk });
+    $('calTitle').textContent = monthName(calMonth)+' '+toArabicNum(calYear);
+    $('calToday').classList.toggle('hidden', calYear===Number(tk.slice(0,4)) && calMonth===Number(tk.slice(5,7)));
+
+    const grid = $('calGrid'); grid.innerHTML = '';
+    const firstKey = `${calYear}-${String(calMonth).padStart(2,'0')}-01`;
+    const offset = DAY_CODES.indexOf(AyyamTime.dayCode(firstKey));
+    for(let i=0;i<offset;i++){ const c = document.createElement('div'); c.className = 'cal-cell empty'; grid.appendChild(c); }
+    m.daySummaries.forEach(s=>{
+      const dnum = Number(s.date.slice(-2));
+      const isToday = s.date===tk, isFuture = s.date>tk;
+      const btn = document.createElement('button');
+      btn.className = 'cal-cell' + (isToday?' today':'') + (isFuture?' future':'');
+      let dot = '';
+      if(!isFuture){
+        if(s.state==='no_expected') dot = 'no_expected';
+        else if(s.state==='unrecorded') dot = 'unrecorded';
+        else if(s.state==='recorded' && !isToday) dot = A.classify(s) || '';
+      }
+      btn.innerHTML = `<span class="cal-num">${toArabicNum(dnum)}</span><span class="cal-dot ${dot}"></span>`;
+      btn.setAttribute('aria-label', calCellAria(s, dnum, isToday, isFuture));
+      btn.setAttribute('role','gridcell');
+      btn.addEventListener('click', ()=> openDayOverview(s.date));
+      grid.appendChild(btn);
+    });
+    renderCalSummary(m);
+  }
+  function renderCalSummary(m){
+    const el = $('calSummary');
+    const items = [
+      ['أيام مسجلة', m.recordedDays], ['قوية', m.highDays], ['متوسطة', m.mediumDays],
+      ['منخفضة', m.lowDays], ['بدون تسجيل', m.unrecordedDays],
+      ['نسبة الشهر', m.overallRatePct==null ? '—' : toArabicNum(m.overallRatePct)+'٪'],
+    ];
+    let html = '<h3>ملخّص الشهر</h3><div class="cal-sum-grid">';
+    items.forEach(([l,n])=> html += `<div class="cal-sum-item"><div class="n">${typeof n==='number'?toArabicNum(n):n}</div><div class="l">${l}</div></div>`);
+    html += '</div>';
+    // best day only when there is enough data; worst day intentionally omitted (can mislead with little data)
+    if(m.recordedDays>=3 && m.bestDay){ html += `<div class="cal-sum-note">أفضل يوم: ${toArabicNum(Number(m.bestDay.date.slice(-2)))} ${monthName(calMonth)} (${toArabicNum(m.bestDay.ratePct)}٪)</div>`; }
+    if(m.recordedDays===0){ html += '<div class="cal-sum-note">كلما سجّلت أيامًا أكثر ستظهر لك أنماط أوضح.</div>'; }
+    el.innerHTML = html;
+  }
+
+  function openDayOverview(dateKey){
+    dayOverviewKey = dateKey;
+    const A = AN(); const tk = todayKey();
+    const s = A.daySummary(currentBundle(), dateKey, { today: tk });
+    const m = A.monthSummary(currentBundle(), Number(dateKey.slice(0,4)), Number(dateKey.slice(5,7)), { today: tk });
+    const code = dayCodeFor(parseKey(dateKey));
+    $('daySheetTitle').textContent = DAY_LABELS[code]+' '+toArabicNum(Number(dateKey.slice(-2)))+' '+monthName(Number(dateKey.slice(5,7)));
+    renderDayBody(s, m);
+    $('dayOverlay').classList.add('show');
+  }
+  function closeDayOverview(){ $('dayOverlay').classList.remove('show'); dayOverviewKey = null; }
+  function renderDayBody(s, m){
+    const el = $('dayBody'); const A = AN();
+    if(s.state==='no_expected'){ el.innerHTML = '<div class="day-empty-msg">لا توجد مهام متوقعة في هذا اليوم.</div>'; return; }
+    const cls = (s.state==='recorded' && !s.isInProgress) ? (A.classify(s) || 'low') : s.state;
+    const stateLabel = s.state==='unrecorded' ? 'بدون تسجيل'
+      : s.isInProgress ? 'قيد اليوم'
+      : cls==='high' ? 'يوم قوي' : cls==='medium' ? 'يوم متوسط' : 'يوم منخفض';
+    let html = `<div><span class="day-state-pill ${cls}">${stateLabel}</span></div>`;
+    if(s.state==='unrecorded'){
+      html += `<div class="day-empty-msg">لم يتم تسجيل متابعة هذا اليوم. المتوقّع ${toArabicNum(s.expected)} مهمة.</div>`;
+      el.innerHTML = html; return;
+    }
+    const pctv = s.ratePct==null ? 0 : s.ratePct;
+    html += `<div class="day-sec"><div style="display:flex;justify-content:space-between;font-size:14px;"><span>${toArabicNum(s.completed)} / ${toArabicNum(s.expected)}</span><span>${toArabicNum(pctv)}٪</span></div>`;
+    html += `<div class="day-progress-bar"><div class="day-progress-fill" style="width:${pctv}%"></div></div></div>`;
+    const done = s.tasks.filter(t=>t.done), miss = s.tasks.filter(t=>!t.done);
+    if(done.length) html += '<div class="day-sec"><h4>أنجزت</h4>'+done.map(t=>`<div class="day-task done"><span class="mk">✓</span><span>${escapeHtml(t.title)}</span></div>`).join('')+'</div>';
+    if(miss.length){ const lbl = s.isInProgress ? 'متبقٍّ' : 'لم تُنجز'; html += `<div class="day-sec"><h4>${lbl}</h4>`+miss.map(t=>`<div class="day-task miss"><span class="mk">○</span><span>${escapeHtml(t.title)}</span></div>`).join('')+'</div>'; }
+    const periods = PERIODS.filter(p=> s.byPeriod[p.key]);
+    if(periods.length){
+      html += '<div class="day-sec"><h4>حسب الفترة</h4>';
+      periods.forEach(p=>{ const b = s.byPeriod[p.key]; const bp = b.ratePct==null?0:b.ratePct; html += `<div class="day-period-row"><span class="pl">${p.label}</span><span class="pt"><span class="pf" style="width:${bp}%;background:${p.color}"></span></span><span>${toArabicNum(b.completed)}/${toArabicNum(b.expected)}</span></div>`; });
+      html += '</div>';
+    }
+    if(s.state==='recorded' && !s.isInProgress && s.rate!=null && m.recordedDays>=5 && m.overallRate!=null){
+      const delta = Math.round((s.rate - m.overallRate)*100);
+      if(delta!==0){ html += `<div class="cal-sum-note">${delta>0?'أفضل من':'أقل من'} متوسط الشهر بـ${toArabicNum(Math.abs(delta))}٪</div>`; }
+    }
+    el.innerHTML = html;
+  }
   function renderTplDays(){
     const el = $('tplDays');
     el.innerHTML='';
@@ -1636,6 +1770,17 @@
   // reports
   $('openReports').addEventListener('click', openReports);
   $('closeReports').addEventListener('click', closeReports);
+
+  // calendar
+  $('openCalendar').addEventListener('click', openCalendar);
+  $('closeCalendar').addEventListener('click', closeCalendar);
+  $('calPrev').addEventListener('click', ()=> calShift(-1));
+  $('calNext').addEventListener('click', ()=> calShift(1));
+  $('calToday').addEventListener('click', ()=>{ const tk=todayKey(); calYear=Number(tk.slice(0,4)); calMonth=Number(tk.slice(5,7)); renderCalendar(); });
+  $('dayPrev').addEventListener('click', ()=>{ if(dayOverviewKey) openDayOverview(AyyamTime.addDays(dayOverviewKey,-1)); });
+  $('dayNext').addEventListener('click', ()=>{ if(dayOverviewKey) openDayOverview(AyyamTime.addDays(dayOverviewKey,1)); });
+  $('dayClose').addEventListener('click', closeDayOverview);
+  $('dayOverlay').addEventListener('click', (e)=>{ if(e.target.id==='dayOverlay') closeDayOverview(); });
   { const cd = $('copyDiag'); if(cd) cd.addEventListener('click', copyDiag); }
   Array.from(document.querySelectorAll('.report-tab')).forEach(tab=>{
     tab.addEventListener('click', ()=>{
