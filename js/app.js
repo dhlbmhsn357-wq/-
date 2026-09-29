@@ -647,11 +647,13 @@
   function todayKey(){ return (typeof AyyamTime!=='undefined') ? AyyamTime.todayKey(dayTz()) : dateKey(new Date()); }
 
   function ensureLog(key){
-    if(!logs[key]) logs[key] = {done:{}, extra:[], hidden:{}, overrides:{}};
+    if(!logs[key]) logs[key] = {done:{}, extra:[], hidden:{}, overrides:{}, excused:{}, replacements:{}};
     if(!logs[key].done) logs[key].done = {};
     if(!logs[key].extra) logs[key].extra = [];
     if(!logs[key].hidden) logs[key].hidden = {};
     if(!logs[key].overrides) logs[key].overrides = {};
+    if(!logs[key].excused) logs[key].excused = {};
+    if(!logs[key].replacements) logs[key].replacements = {};
     return logs[key];
   }
   // Read-only access for rendering: never creates entries (only real edits should add to the data).
@@ -781,6 +783,10 @@
     try{
       const upd = $('updateOverlay');
       if(upd && upd.classList.contains('show')){ closeUpdateSheet(); return; }      // 0. update sheet
+      const exc = $('excuseOverlay');
+      if(exc && exc.classList.contains('show')){ closeExcuseSheet(); return; }      // 0b. excuse sheet
+      const tac = $('taskActionOverlay');
+      if(tac && tac.classList.contains('show')){ closeTaskActions(); return; }      // 0c. task action menu
       const add = $('addOverlay');
       if(add && add.classList.contains('show')){ closeAddSheet(); return; }        // 1. open sheet
       const dayOv = $('dayOverlay');
@@ -960,28 +966,31 @@
       return;
     }
 
+    // A "replaced" original is represented by its replacement occurrence (shown with a "بدلًا من" note),
+    // so we don't render the original too. The header count is over ACTIONABLE tasks (excused excluded).
+    const groupCount = (list)=>{ const act = list.filter(t=>t.status!=='excused'); return `${toArabicNum(act.filter(t=>t.done).length)}/${toArabicNum(act.length)}`; };
     PERIODS.forEach(p=>{
-      const list = tasks.filter(t=>t.period===p.key);
+      const list = tasks.filter(t=>t.period===p.key && t.status!=='replaced');
       if(list.length===0) return;
       const section = document.createElement('div');
       const head = document.createElement('div');
       head.className='group-head';
       head.innerHTML = `<span class="dot-sm" style="background:${p.color}"></span>
         <span class="group-title">${p.label}</span>
-        <span class="group-count">${toArabicNum(list.filter(t=>t.done).length)}/${toArabicNum(list.length)}</span>`;
+        <span class="group-count">${groupCount(list)}</span>`;
       section.appendChild(head);
       list.forEach(t=> section.appendChild(taskRow(t)));
       groupsEl.appendChild(section);
     });
 
-    const free = tasks.filter(t=>!t.period);
+    const free = tasks.filter(t=>!t.period && t.status!=='replaced');
     if(free.length){
       const section = document.createElement('div');
       const head = document.createElement('div');
       head.className='group-head';
       head.innerHTML = `<span class="dot-sm" style="background:var(--text-dim)"></span>
         <span class="group-title">مهام حرة</span>
-        <span class="group-count">${toArabicNum(free.filter(t=>t.done).length)}/${toArabicNum(free.length)}</span>`;
+        <span class="group-count">${groupCount(free)}</span>`;
       section.appendChild(head);
       free.forEach(t=> section.appendChild(taskRow(t)));
       groupsEl.appendChild(section);
@@ -989,22 +998,35 @@
   }
 
   function taskRow(t){
+    const excused = t.status==='excused';
     const row = document.createElement('div');
-    row.className = 'task' + (t.done?' done':'');
+    row.className = 'task' + (t.done?' done':'') + (excused?' excused':'') + (t.isReplacement?' replacement':'');
     if(t.id) row.dataset.taskId = t.id; // deep-link focus target (harmless on web)
-    const check = document.createElement('button');
-    check.className = 'check' + (t.done?' checked':'');
-    check.textContent = t.done ? '✓' : '';
-    check.setAttribute('aria-label', t.done ? 'إلغاء الإتمام' : 'تمّ');
-    check.addEventListener('click', ()=> toggleTask(t));
-    row.appendChild(check);
+
+    if(excused){
+      // Excused: no checkbox (it is not "done"); a calm "معذور" marker instead.
+      const badge = document.createElement('span');
+      badge.className='excused-mark'; badge.textContent='⊘';
+      badge.setAttribute('aria-label','معذور');
+      row.appendChild(badge);
+    } else {
+      const check = document.createElement('button');
+      check.className = 'check' + (t.done?' checked':'');
+      check.textContent = t.done ? '✓' : '';
+      check.setAttribute('aria-label', t.done ? 'إلغاء الإتمام' : 'تمّ');
+      check.addEventListener('click', ()=> toggleTask(t));
+      row.appendChild(check);
+    }
 
     const mid = document.createElement('div');
     mid.className = 'task-main';
     mid.setAttribute('role','button');
     mid.tabIndex = 0; // reachable and editable from the keyboard too
     mid.setAttribute('aria-label', 'تعديل: ' + t.title);
-    mid.innerHTML = `<div class="task-title">${escapeHtml(t.title)}</div>`;
+    let sub = '';
+    if(excused) sub = '<div class="task-sub excused">معذور</div>';
+    else if(t.isReplacement && t.replacesTitle) sub = `<div class="task-sub">بدلًا من: ${escapeHtml(t.replacesTitle)}</div>`;
+    mid.innerHTML = `<div class="task-title">${escapeHtml(t.title)}</div>${sub}`;
     mid.addEventListener('click', ()=> openEditSheet(t));
     mid.addEventListener('keydown', (e)=>{
       if(e.key==='Enter' || e.key===' '){ e.preventDefault(); openEditSheet(t); }
@@ -1019,11 +1041,20 @@
       row.appendChild(time);
     }
 
+    // ⋮ opens the per-occurrence action menu (edit / replace / excuse / undo).
+    const menu = document.createElement('button');
+    menu.className='task-menu';
+    menu.textContent='⋮';
+    menu.setAttribute('aria-label','خيارات المهمة');
+    menu.addEventListener('click', (e)=>{ e.stopPropagation(); openTaskActions(t); });
+    row.appendChild(menu);
+
+    // ✕ quick delete stays (a replacement's ✕ clears the replacement, restoring the original).
     const del = document.createElement('button');
     del.className='task-del';
     del.textContent='✕';
     del.setAttribute('aria-label','حذف المهمة');
-    del.addEventListener('click', (e)=>{ e.stopPropagation(); deleteTask(t); });
+    del.addEventListener('click', (e)=>{ e.stopPropagation(); if(t.isReplacement) unreplace(t); else deleteTask(t); });
     row.appendChild(del);
 
     return row;
@@ -1065,6 +1096,94 @@
       const log = ensureLog(selKey);
       log.extra = log.extra.filter(x=>x.id!==t.id); delete log.done[t.id];
     }
+    await saveBundle('sync'); render();
+  }
+
+  // ---------- per-occurrence action menu: edit / replace / excuse / delete / undo ----------
+  let taskActionTarget = null;
+  function openTaskActions(t){
+    taskActionTarget = t;
+    const list = $('taskActionList'); if(!list) return;
+    $('taskActionTitle').textContent = t.title || 'المهمة';
+    list.innerHTML = '';
+    const add = (label, cls, fn)=>{
+      const b = document.createElement('button');
+      b.className = 'action-item' + (cls?(' '+cls):'');
+      b.textContent = label;
+      b.addEventListener('click', ()=>{ closeTaskActions(); fn(); });
+      list.appendChild(b);
+    };
+    if(t.isReplacement){
+      add('تعديل البديلة', '', ()=> openReplaceEditor({ origId: t.replacesId, period: t.period, timeValue: t.timeValue, fromTemplate: !!(routines && routines[t.replacesId]) }, { title: t.title, period: t.period, timeValue: t.timeValue }, true));
+      add('إلغاء الاستبدال', 'danger', ()=> unreplace(t));
+    } else if(t.status==='excused'){
+      add('إلغاء العذر', '', ()=> unexcuse(t));
+      add('تعديل', '', ()=> openEditSheet(t));
+      add('حذف', 'danger', ()=> deleteTask(t));
+    } else {
+      add('تعديل', '', ()=> openEditSheet(t));
+      add('استبدال المهمة', '', ()=> openReplaceEditor(t, null, false));
+      add('عندي عذر', '', ()=> openExcuseSheet(t));
+      add('حذف', 'danger', ()=> deleteTask(t));
+    }
+    $('taskActionOverlay').classList.add('show');
+  }
+  function closeTaskActions(){ $('taskActionOverlay').classList.remove('show'); taskActionTarget=null; }
+
+  // «عندي عذر» — mark an occurrence excused for the viewed date (optional reason + note; never required).
+  let excuseTarget = null, pendingExcuseReason = '';
+  const EXCUSE_REASONS = [['emergency','ظرف طارئ'],['illness','مرض'],['travel','سفر'],['commitment','التزام آخر'],['other','أخرى']];
+  function openExcuseSheet(t){
+    excuseTarget = t; pendingExcuseReason = '';
+    const pick = $('excuseReasonPick'); pick.innerHTML='';
+    EXCUSE_REASONS.forEach(([key,label])=>{
+      const chip = document.createElement('button');
+      chip.className='rec-chip'; chip.textContent=label; chip.setAttribute('aria-pressed','false');
+      chip.addEventListener('click', ()=>{
+        pendingExcuseReason = (pendingExcuseReason===key) ? '' : key; // toggle
+        Array.from(pick.children).forEach(c=>{ c.classList.remove('active'); c.setAttribute('aria-pressed','false'); });
+        if(pendingExcuseReason===key){ chip.classList.add('active'); chip.setAttribute('aria-pressed','true'); }
+      });
+      pick.appendChild(chip);
+    });
+    $('excuseNote').value='';
+    $('excuseTaskTitle').textContent = t.title || '';
+    $('excuseOverlay').classList.add('show');
+  }
+  function closeExcuseSheet(){ $('excuseOverlay').classList.remove('show'); excuseTarget=null; }
+  async function saveExcuse(){
+    const t = excuseTarget; if(!t) return;
+    const selKey = dateKey(selectedDate);
+    const note = ($('excuseNote').value||'').trim().slice(0,500);
+    logs = AyyamRoutines.setExcused(logs, selKey, t.origId||t.id, { reason: pendingExcuseReason, note });
+    await saveBundle('sync'); closeExcuseSheet(); render();
+  }
+  async function unexcuse(t){
+    const selKey = dateKey(selectedDate);
+    logs = AyyamRoutines.clearExcused(logs, selKey, t.origId||t.id);
+    await saveBundle('sync'); render();
+  }
+
+  // «استبدال المهمة» — reuses the add/edit sheet in replace mode. today-only ⇒ logs.replacements; a
+  // recurring original with scope "this and future" ⇒ recurrence split (same seriesId, new title/time).
+  let replacingOccurrence = null, replaceForceToday = false;
+  function openReplaceEditor(orig, prefill, forceToday){
+    editingTask = null; isEditingRoutine = false; editingRoutineId = null; editingContext = 'day';
+    replacingOccurrence = orig; replaceForceToday = !!forceToday;
+    $('sheetTitle').textContent = 'استبدال المهمة';
+    $('saveAdd').textContent = 'حفظ البديلة';
+    $('taskTitle').value = (prefill && prefill.title) ? prefill.title : '';
+    pendingPeriod = (prefill && 'period' in prefill) ? prefill.period : (orig.period || null);
+    pendingTimeValue = (prefill && 'timeValue' in prefill) ? prefill.timeValue : (orig.timeValue || null);
+    setTimeUI(pendingTimeValue);
+    renderPeriodPick();
+    showRecurrenceField(false); // the replacement is a single task; recurrence scope is handled by the modal
+    showSheet();
+  }
+  async function unreplace(t){
+    const selKey = dateKey(selectedDate);
+    if(t.done && !confirm('البديلة منجزة. إلغاء الاستبدال سيحذفها ويعيد المهمة الأصلية. أتريد المتابعة؟')) return;
+    logs = AyyamRoutines.clearReplacement(logs, selKey, t.replacesId);
     await saveBundle('sync'); render();
   }
 
@@ -1154,7 +1273,7 @@
 
   function openAddSheet(opts){
     opts = (opts && typeof opts==='object' && !opts.type) ? opts : {}; // ignore DOM events passed as arg
-    editingTask = null; isEditingRoutine=false; editingRoutineId=null;
+    editingTask = null; isEditingRoutine=false; editingRoutineId=null; replacingOccurrence=null; replaceForceToday=false;
     editingContext = opts.mode==='template' ? 'template' : 'day';
     $('sheetTitle').textContent = editingContext==='template' ? 'روتين جديد' : 'مهمة جديدة';
     $('saveAdd').textContent = 'إضافة';
@@ -1168,7 +1287,7 @@
   }
 
   function openEditSheet(t){
-    editingTask = t; editingContext='day';
+    editingTask = t; editingContext='day'; replacingOccurrence=null; replaceForceToday=false;
     const rt = (t.fromTemplate && routines && routines[t.origId]) ? routines[t.origId] : null;
     isEditingRoutine = !!rt; editingRoutineId = rt ? rt.id : null;
     $('sheetTitle').textContent = 'تعديل المهمة';
@@ -1227,7 +1346,7 @@
   }
   function closeAddSheet(){
     $('addOverlay').classList.remove('show');
-    editingTask=null;
+    editingTask=null; replacingOccurrence=null; replaceForceToday=false;
     // return focus to where the user was (if that element still exists after re-render)
     if(sheetReturnFocus && document.contains(sheetReturnFocus)) sheetReturnFocus.focus();
     sheetReturnFocus = null;
@@ -1249,7 +1368,7 @@
   function askScope(kind){
     return new Promise((resolve)=>{
       scopeResolver = resolve;
-      $('scopeMsg').textContent = kind==='delete' ? 'حذف هذه المهمة المتكررة من:' : 'تطبيق التعديل على:';
+      $('scopeMsg').textContent = kind==='delete' ? 'حذف هذه المهمة المتكررة من:' : kind==='replace' ? 'تطبيق الاستبدال على:' : 'تطبيق التعديل على:';
       $('scopeOverlay').classList.add('show');
     });
   }
@@ -1265,6 +1384,25 @@
     const timeValue = readTimeUI();
     const period = pendingPeriod;
     const selKey = dateKey(selectedDate);
+
+    // REPLACE mode: today-only ⇒ logs.replacements (original becomes `replaced`); a recurring original
+    // with scope "this and future" ⇒ recurrence split (same seriesId, new title/period/time from today).
+    if(replacingOccurrence){
+      const orig = replacingOccurrence; const origId = orig.origId || orig.id;
+      const rt = (orig.fromTemplate && routines && routines[origId]) ? routines[origId] : null;
+      if(rt && !replaceForceToday){
+        const scope = await askScope('replace');
+        if(!scope) return; // cancelled → keep editing
+        if(scope==='future'){
+          routines = AyyamRoutines.splitRoutine(routines, origId, selKey, { title, period, timeValue, rec: rt.rec });
+        } else {
+          logs = AyyamRoutines.setReplacement(logs, selKey, origId, { title, period, timeValue });
+        }
+      } else {
+        logs = AyyamRoutines.setReplacement(logs, selKey, origId, { title, period, timeValue });
+      }
+      await saveBundle('sync'); replacingOccurrence=null; replaceForceToday=false; closeAddSheet(); render(); return;
+    }
 
     // Recurrence-management screen: add/edit a routine, effective from today forward (past immutable).
     if(editingContext==='template'){ await saveTemplateRoutine(title, period, timeValue); return; }
@@ -1698,9 +1836,21 @@
     const pctv = s.ratePct==null ? 0 : s.ratePct;
     html += `<div class="day-sec"><div style="display:flex;justify-content:space-between;font-size:14px;"><span>${toArabicNum(s.completed)} / ${toArabicNum(s.expected)}</span><span>${toArabicNum(pctv)}٪</span></div>`;
     html += `<div class="day-progress-bar"><div class="day-progress-fill" style="width:${pctv}%"></div></div></div>`;
-    const done = s.tasks.filter(t=>t.done), miss = s.tasks.filter(t=>!t.done);
+    // Status-aware sections: actionable (done/not) + excused + replaced are surfaced separately, never hidden.
+    const actionable = s.tasks.filter(t=>t.status!=='excused' && t.status!=='replaced');
+    const done = actionable.filter(t=>t.done), miss = actionable.filter(t=>!t.done);
+    const excused = s.tasks.filter(t=>t.status==='excused');
+    const replaced = s.tasks.filter(t=>t.status==='replaced').map(o=>{ const rep = s.tasks.find(x=>x.isReplacement && x.replacesId===o.id); return { from:o.title, to: rep ? rep.title : '' }; });
+    if(excused.length || replaced.length){
+      let note = `${toArabicNum(s.completed)} من ${toArabicNum(s.actionable)} مهمة قابلة للتنفيذ`;
+      if(excused.length) note += ` · ${toArabicNum(excused.length)} بعذر`;
+      if(replaced.length) note += ` · ${toArabicNum(replaced.length)} مستبدلة`;
+      html += `<div class="cal-sum-note">${note}</div>`;
+    }
     if(done.length) html += '<div class="day-sec"><h4>أنجزت</h4>'+done.map(t=>`<div class="day-task done"><span class="mk">✓</span><span>${escapeHtml(t.title)}</span></div>`).join('')+'</div>';
     if(miss.length){ const lbl = s.isInProgress ? 'متبقٍّ' : 'لم تُنجز'; html += `<div class="day-sec"><h4>${lbl}</h4>`+miss.map(t=>`<div class="day-task miss"><span class="mk">○</span><span>${escapeHtml(t.title)}</span></div>`).join('')+'</div>'; }
+    if(excused.length) html += '<div class="day-sec"><h4>بعذر</h4>'+excused.map(t=>`<div class="day-task excused"><span class="mk">⊘</span><span>${escapeHtml(t.title)}</span></div>`).join('')+'</div>';
+    if(replaced.length) html += '<div class="day-sec"><h4>استُبدلت</h4>'+replaced.map(r=>`<div class="day-task replaced"><span class="mk">↺</span><span>${escapeHtml(r.from)}${r.to?' ← '+escapeHtml(r.to):''}</span></div>`).join('')+'</div>';
     const periods = PERIODS.filter(p=> s.byPeriod[p.key]);
     if(periods.length){
       html += '<div class="day-sec"><h4>حسب الفترة</h4>';
@@ -1788,6 +1938,11 @@
   $('scopeFuture').addEventListener('click', ()=> resolveScope('future'));
   $('scopeCancel').addEventListener('click', ()=> resolveScope(null));
   $('scopeOverlay').addEventListener('click', (e)=>{ if(e.target.id==='scopeOverlay') resolveScope(null); });
+  $('taskActionClose').addEventListener('click', closeTaskActions);
+  $('taskActionOverlay').addEventListener('click', (e)=>{ if(e.target.id==='taskActionOverlay') closeTaskActions(); });
+  $('excuseSave').addEventListener('click', saveExcuse);
+  $('excuseCancel').addEventListener('click', closeExcuseSheet);
+  $('excuseOverlay').addEventListener('click', (e)=>{ if(e.target.id==='excuseOverlay') closeExcuseSheet(); });
 
   $('clearDayBtn').addEventListener('click', clearWholeDay);
   $('restoreDayBtn').addEventListener('click', restoreDayToTemplate);

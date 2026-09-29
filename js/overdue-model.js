@@ -82,6 +82,8 @@
     const overdue = [];
     tasks.forEach((t) => {
       if (!t || t.done) return;                                // completed → never overdue
+      if (t.status === 'excused' || t.status === 'replaced') return; // excused + replaced originals are not overdue
+      // (a replacement occurrence is a normal pending task here → it flows through the period/time logic)
       const period = PERIOD_ORDER.includes(t.period) ? t.period : null;
       const timed = typeof t.timeValue === 'string' && TIME_RE.test(t.timeValue);
       let isOverdue = false;

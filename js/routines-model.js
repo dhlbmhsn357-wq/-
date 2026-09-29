@@ -115,21 +115,83 @@
     return arr.map((x) => clone(x)); // whole task object (preserves _order etc.), matching app.js tasksForDate
   }
 
-  // ---------- apply per-day log (hidden / overrides / done / extra) — identical to legacy tasksForDate ----------
-  function emptyLog() { return { done: {}, extra: [], hidden: {}, overrides: {} }; }
+  // ---------- apply per-day log (hidden / overrides / done / extra / excused / replacements) ----------
+  function emptyLog() { return { done: {}, extra: [], hidden: {}, overrides: {}, excused: {}, replacements: {} }; }
   function readLog(logs, key) {
     const l = isObj(logs) && isObj(logs[key]) ? logs[key] : null;
     if (!l) return emptyLog();
-    return { done: l.done || {}, extra: Array.isArray(l.extra) ? l.extra : [], hidden: l.hidden || {}, overrides: l.overrides || {} };
+    return { done: l.done || {}, extra: Array.isArray(l.extra) ? l.extra : [], hidden: l.hidden || {}, overrides: l.overrides || {},
+             excused: isObj(l.excused) ? l.excused : {}, replacements: isObj(l.replacements) ? l.replacements : {} };
   }
+  // Deterministic id for a today-only replacement occurrence (so its completion + sync converge).
+  function replId(originalId) { return `${originalId}#repl`; }
+  // Per-occurrence status. Priority: replaced > completed > excused > pending (deterministic, no data loss).
+  // An explicit replacement restructures the day; a concrete completion outranks a (softer) excuse.
+  function statusOf(id, log) {
+    if (isObj(log.replacements[id])) return 'replaced';
+    if (log.done[id] === true) return 'completed';
+    if (log.excused[id]) return 'excused';
+    return 'pending';
+  }
+  function replacementOccurrence(orig, rep, log) {
+    const rid = replId(orig.id);
+    const t = (isObj(rep) && isObj(rep.task)) ? rep.task : {};
+    const done = log.done[rid] === true;
+    return { id: rid, title: t.title || '', time: t.time || '', timeValue: t.timeValue || null, period: t.period || null,
+      _order: Number.isFinite(orig._order) ? orig._order : 0, done, status: done ? 'completed' : 'pending',
+      fromTemplate: false, isReplacement: true, replacesId: orig.id, replacesTitle: orig.title || '' };
+  }
+  // Annotate each occurrence with `status`; inject a replacement occurrence for every `replaced` original.
+  // Backward-compatible: with empty excused/replacements, output equals the old shape + a `status` field.
   function applyLog(base, log) {
-    const out = base.filter((t) => !log.hidden[t.id]).map((t) => {
+    const out = [];
+    base.filter((t) => !log.hidden[t.id]).forEach((t) => {
       const ov = log.overrides[t.id];
       const merged = ov ? Object.assign({}, t, ov) : t;
-      return Object.assign({}, merged, { done: !!log.done[t.id], fromTemplate: true, origId: t.id });
+      const status = statusOf(t.id, log);
+      out.push(Object.assign({}, merged, { done: status === 'completed', status, fromTemplate: true, origId: t.id }));
+      if (status === 'replaced') out.push(replacementOccurrence(merged, log.replacements[t.id], log));
     });
-    const extra = log.extra.map((t) => Object.assign({}, t, { done: !!log.done[t.id], fromTemplate: false }));
-    return out.concat(extra);
+    log.extra.forEach((t) => {
+      const status = statusOf(t.id, log);
+      out.push(Object.assign({}, t, { done: status === 'completed', status, fromTemplate: false, origId: t.id }));
+      if (status === 'replaced') out.push(replacementOccurrence(t, log.replacements[t.id], log));
+    });
+    return out;
+  }
+
+  // ---------- pure per-day mutators (excuse / replace) on the logs object; return a NEW logs map ----------
+  function withDay(logs, dateKey) {
+    const out = isObj(logs) ? clone(logs) : {};
+    if (!isObj(out[dateKey])) out[dateKey] = { done: {}, extra: [], hidden: {}, overrides: {}, excused: {}, replacements: {} };
+    const d = out[dateKey];
+    d.done = isObj(d.done) ? d.done : {}; d.hidden = isObj(d.hidden) ? d.hidden : {}; d.overrides = isObj(d.overrides) ? d.overrides : {};
+    d.extra = Array.isArray(d.extra) ? d.extra : []; d.excused = isObj(d.excused) ? d.excused : {}; d.replacements = isObj(d.replacements) ? d.replacements : {};
+    return out;
+  }
+  // Mark an occurrence excused for a date (clears any completion — the two are mutually exclusive on-device).
+  function setExcused(logs, dateKey, id, info) {
+    const out = withDay(logs, dateKey); const d = out[dateKey];
+    d.excused[id] = { reason: (info && typeof info.reason === 'string') ? info.reason : '', note: (info && typeof info.note === 'string') ? info.note : '' };
+    delete d.done[id];
+    return out;
+  }
+  function clearExcused(logs, dateKey, id) { const out = withDay(logs, dateKey); delete out[dateKey].excused[id]; return out; }
+  // Replace an occurrence for a date only: original → replaced; a replacement task becomes actionable.
+  function setReplacement(logs, dateKey, id, task, info) {
+    const out = withDay(logs, dateKey); const d = out[dateKey];
+    const t = isObj(task) ? task : {};
+    d.replacements[id] = { task: { title: str(t.title), time: str(t.time), timeValue: cleanTimeValue(t.timeValue), period: PERIODS.has(t.period) ? t.period : null },
+      reason: (info && typeof info.reason === 'string') ? info.reason : '' };
+    delete d.done[id];             // original is no longer "done"
+    delete d.excused[id];          // replaced supersedes excused
+    return out;
+  }
+  function clearReplacement(logs, dateKey, id) {
+    const out = withDay(logs, dateKey); const d = out[dateKey];
+    delete d.replacements[id];
+    delete d.done[replId(id)];     // drop the replacement's completion flag too
+    return out;
   }
 
   // The single materialization entry point. bundle = { routines, template, tplArchive, logs, migrationDate }.
@@ -227,6 +289,7 @@
     DAY_CODES, PERIODS, FREQS, OPEN,
     cleanRec, cleanRoutine, cleanRoutines,
     recAppliesOn, occurrencesForDate, legacyTemplateFor, legacyBase, applyLog, readLog, tasksForDate,
+    statusOf, replId, setExcused, clearExcused, setReplacement, clearReplacement,
     segId, splitRoutine, endRoutine, migrate,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
