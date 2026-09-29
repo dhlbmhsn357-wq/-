@@ -139,13 +139,13 @@
     });
     return out;
   }
-  function bestWorstPeriod(bundle, options) {
-    const st = periodStats(bundle, options);
+  function pickBestWorstPeriod(st) {
     const eligible = PERIODS.map((p) => st[p]).filter((x) => x.sampleSize >= MIN_VERDICT_SAMPLE && x.rate != null);
     if (!eligible.length) return { status: 'insufficient_data' };
     const sorted = eligible.slice().sort((a, b) => b.rate - a.rate || b.sampleSize - a.sampleSize);
     return { status: 'ok', best: sorted[0], weakest: sorted[sorted.length - 1] };
   }
+  function bestWorstPeriod(bundle, options) { return pickBestWorstPeriod(periodStats(bundle, options)); }
 
   // ---------- routine (series) performance ----------
   function routineStats(bundle, options) {
@@ -164,16 +164,16 @@
         rate: r, ratePct: pct(r), missRate: a.expected ? (a.expected - a.completed) / a.expected : null, sampleSize: a.expected, confidence: confidence(a.expected) };
     }).sort((x, y) => (y.rate - x.rate) || (y.sampleSize - x.sampleSize));
   }
-  function consistentTasks(bundle, options) {
-    const limit = (options && Number.isFinite(options.limit)) ? options.limit : 8;
-    return routineStats(bundle, options).filter((r) => r.sampleSize >= MIN_VERDICT_SAMPLE && r.rate != null && r.rate >= 0.8)
-      .sort((a, b) => (b.rate - a.rate) || (b.sampleSize - a.sampleSize)).slice(0, limit);
+  function pickConsistent(routines, limit) {
+    return routines.filter((r) => r.sampleSize >= MIN_VERDICT_SAMPLE && r.rate != null && r.rate >= 0.8)
+      .sort((a, b) => (b.rate - a.rate) || (b.sampleSize - a.sampleSize)).slice(0, limit || 8);
   }
-  function strugglingTasks(bundle, options) {
-    const limit = (options && Number.isFinite(options.limit)) ? options.limit : 8;
-    return routineStats(bundle, options).filter((r) => r.sampleSize >= MIN_VERDICT_SAMPLE && r.missRate != null && r.missRate >= 0.5)
-      .sort((a, b) => (b.missRate - a.missRate) || (b.sampleSize - a.sampleSize)).slice(0, limit);
+  function pickStruggling(routines, limit) {
+    return routines.filter((r) => r.sampleSize >= MIN_VERDICT_SAMPLE && r.missRate != null && r.missRate >= 0.5)
+      .sort((a, b) => (b.missRate - a.missRate) || (b.sampleSize - a.sampleSize)).slice(0, limit || 8);
   }
+  function consistentTasks(bundle, options) { return pickConsistent(routineStats(bundle, options), options && options.limit); }
+  function strugglingTasks(bundle, options) { return pickStruggling(routineStats(bundle, options), options && options.limit); }
 
   // ---------- weekday performance ----------
   function weekdayStats(bundle, options) {
@@ -186,13 +186,13 @@
     DAY_CODES.forEach((c) => { const a = acc[c]; out[c] = { code: c, daysRecorded: a.daysRecorded, expected: a.expected, completed: a.completed, rate: rate(a.completed, a.expected), ratePct: pct(rate(a.completed, a.expected)), confidence: confidence(a.daysRecorded) }; });
     return out;
   }
-  function bestWorstWeekday(bundle, options) {
-    const st = weekdayStats(bundle, options);
+  function pickBestWorstWeekday(st) {
     const eligible = DAY_CODES.map((c) => st[c]).filter((x) => x.daysRecorded >= MIN_VERDICT_SAMPLE && x.rate != null);
     if (!eligible.length) return { status: 'insufficient_data' };
     const sorted = eligible.slice().sort((a, b) => b.rate - a.rate || b.daysRecorded - a.daysRecorded);
     return { status: 'ok', best: sorted[0], weakest: sorted[sorted.length - 1] };
   }
+  function bestWorstWeekday(bundle, options) { return pickBestWorstWeekday(weekdayStats(bundle, options)); }
 
   // ---------- weekly trend (rolling 7-day windows ending yesterday; today excluded as in-progress) ----------
   function windowAgg(bundle, fromKey, toKey, today) {
@@ -268,16 +268,50 @@
       .sort((x, y) => x.hour - y.hour);
   }
 
-  // ---------- convenience: compute the insight base once ----------
+  // Range-level day-state tally + overall rate (for the analytics summary; last-30-days by default).
+  function overview(bundle, options) {
+    options = options || {};
+    const today = resolveToday(bundle, options);
+    let recordedDays = 0, unrecordedDays = 0, noExpectedDays = 0, expected = 0, completed = 0;
+    rangeKeys(bundle, options, today).forEach((k) => {
+      const s = daySummary(bundle, k, { today });
+      if (s.state === 'no_expected') { noExpectedDays++; return; }
+      if (s.state === 'unrecorded') { unrecordedDays++; return; }
+      recordedDays++;
+      if (s.isInProgress) return; // exclude today's live number from the range rate
+      expected += s.expected; completed += s.completed;
+    });
+    return { recordedDays, unrecordedDays, noExpectedDays, expected, completed, overallRate: rate(completed, expected), overallRatePct: pct(rate(completed, expected)) };
+  }
+
+  // ---------- convenience: compute the insight base ONCE (each stat computed a single time) ----------
   function report(bundle, options) {
-    const bw = bestWorstPeriod(bundle, options);
-    const bwd = bestWorstWeekday(bundle, options);
+    const st = periodStats(bundle, options); const bw = pickBestWorstPeriod(st);
+    const wst = weekdayStats(bundle, options); const bwd = pickBestWorstWeekday(wst);
+    const routines = routineStats(bundle, options);
     return {
-      periods: periodStats(bundle, options), bestPeriod: bw.best || null, weakestPeriod: bw.weakest || null, periodStatus: bw.status,
-      routines: routineStats(bundle, options), consistent: consistentTasks(bundle, options), struggling: strugglingTasks(bundle, options),
-      weekdays: weekdayStats(bundle, options), bestWeekday: bwd.best || null, weakestWeekday: bwd.weakest || null, weekdayStatus: bwd.status,
+      periods: st, bestPeriod: bw.best || null, weakestPeriod: bw.weakest || null, periodStatus: bw.status,
+      routines, consistent: pickConsistent(routines, options && options.limit), struggling: pickStruggling(routines, options && options.limit),
+      weekdays: wst, bestWeekday: bwd.best || null, weakestWeekday: bwd.weakest || null, weekdayStatus: bwd.status,
       trend: weekTrend(bundle, options),
     };
+  }
+
+  // ---------- deterministic recommendations (NO AI, NO stat recompute) ----------
+  // Pure: consumes a `report` (and optional context) and returns 1-2 structured recommendations, ranked
+  // by actionability. The UI turns {kind, ...} into calm Arabic text; the gating/choice lives here.
+  function recommendations(report, ctx) {
+    const out = [];
+    const s = (report.struggling || [])[0]; // already gated: sample>=5, missRate>=0.5
+    if (s) out.push({ kind: 'struggling', seriesId: s.seriesId, title: s.title, completed: s.completed, expected: s.expected, missed: s.missed });
+    if (report.periodStatus === 'ok' && report.bestPeriod && report.weakestPeriod) {
+      const gap = report.bestPeriod.rate - report.weakestPeriod.rate; // clear, confident gap only
+      if (gap >= 0.25 && report.bestPeriod.confidence !== 'low' && report.weakestPeriod.confidence !== 'low') {
+        out.push({ kind: 'period_gap', bestPeriod: report.bestPeriod.period, bestRatePct: report.bestPeriod.ratePct, weakPeriod: report.weakestPeriod.period, weakRatePct: report.weakestPeriod.ratePct });
+      }
+    }
+    if (!out.length) out.push({ kind: 'keep_logging' });
+    return out.slice(0, 2);
   }
 
   global.AyyamAnalytics = {
@@ -287,6 +321,6 @@
     periodStats, bestWorstPeriod,
     routineStats, consistentTasks, strugglingTasks,
     weekdayStats, bestWorstWeekday,
-    weekTrend, monthSummary, classify, hourlyStats, report,
+    weekTrend, monthSummary, classify, hourlyStats, overview, report, recommendations,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -1434,111 +1434,106 @@
     render();
   }
 
-  // ---------- reports ----------
-  let reportRange = 'week';
-
-  // Every range starts no earlier than the first day the app was used (parsed as local midnight,
-  // so today is always included).
-  function rangeDates(range){
-    const today = parseKey(todayKey());
-    const firstDay = parseKey(firstActiveKey());
-    let start;
-    if(range==='week'){
-      start = startOfWeek(today);
-    } else if(range==='month'){
-      start = new Date(today.getFullYear(), today.getMonth(), 1);
-    } else {
-      start = firstDay;
-    }
-    if(start < firstDay) start = firstDay;
-    const dates = [];
-    const cursor = new Date(start);
-    while(cursor <= today){
-      dates.push(new Date(cursor));
-      cursor.setDate(cursor.getDate()+1);
-    }
-    return dates;
-  }
+  // ---------- performance insights (I1) — pure render over AyyamAnalytics; NO analytics logic here ----------
+  const INS_RANGE = { days: 30 };
+  const insCard = (title, inner)=> `<div class="report-card"><h3>${title}</h3>${inner}</div>`;
+  const periodLbl = (k)=> (PERIOD_MAP[k] ? PERIOD_MAP[k].label : k);
 
   function renderReports(){
-    const dates = rangeDates(reportRange);
-    const tKey = todayKey();
-    let allTasks = [];
-    const perDay = [];
-    dates.forEach(d=>{
-      const tasks = tasksForDate(d);
-      allTasks = allTasks.concat(tasks);
-      perDay.push({date:d, tasks});
-    });
-    // Only fully-finished days count toward "weakest day" / "most missed"
-    // judgments — today is still in progress and shouldn't be scored as a failure.
-    const perDayFinal = perDay.filter(({date}) => dateKey(date) !== tKey);
+    const A = window.AyyamAnalytics;
+    const el = $('insBody'); if(!el) return;
+    const opts = Object.assign({ today: todayKey() }, INS_RANGE);
+    const bundle = currentBundle();
+    const ov = A.overview(bundle, opts);
+    if(ov.recordedDays < 5){ el.innerHTML = insSparse(ov.recordedDays); return; } // sparse state
+    const rep = A.report(bundle, opts);
+    const recs = A.recommendations(rep, ov);
+    el.innerHTML =
+      insSummary(rep.trend, ov) +
+      insPeriods(rep) +
+      insConsistent(rep.consistent) +
+      insStruggling(rep.struggling) +
+      insWeekday(rep) +
+      insHourly(A.hourlyStats(bundle, opts)) +
+      insRecs(recs) +
+      insUnrecordedNote(ov);
+  }
 
-    const byPeriodEl = $('reportByPeriod');
-    byPeriodEl.innerHTML = '';
-    if(allTasks.length===0){
-      byPeriodEl.innerHTML = '<p class="empty" style="padding:10px 0;">لا بيانات كافية بعد</p>';
+  function insSparse(recorded){
+    const w = Math.min(100, Math.round(recorded/5*100));
+    return `<div class="report-card ins-sparse"><h3>لسه بنكوّن صورتك</h3>
+      <p>كلما سجّلت أيامًا أكثر، ستتعرّف «أيام» على أنماط أدائك بشكل أدق.</p>
+      <div class="ins-progress"><span>${toArabicNum(recorded)} / ٥ أيام</span>
+        <div class="day-progress-bar"><div class="day-progress-fill" style="width:${w}%"></div></div></div></div>`;
+  }
+  function insSummary(trend, ov){
+    const bigPct = trend.status==='ok' ? trend.currentRatePct : ov.overallRatePct;
+    const bigLbl = trend.status==='ok' ? 'أداء هذا الأسبوع' : 'متوسط آخر ٣٠ يومًا';
+    let tl;
+    if(trend.status==='ok'){
+      const up = trend.deltaPct>=0;
+      tl = `<div class="ins-trend ${up?'up':'down'}">${up?'↑':'↓'} ${toArabicNum(Math.abs(trend.deltaPct))}٪ <span>${up?'أداء أفضل من الأسبوع السابق':'أداء أقل من الأسبوع السابق'}</span></div>`;
     } else {
-      PERIODS.forEach(p=>{
-        const segTasks = allTasks.filter(t=>t.period===p.key);
-        const segPct = segTasks.length ? Math.round((segTasks.filter(t=>t.done).length/segTasks.length)*100) : 0;
-        const row = document.createElement('div');
-        row.className='bar-row';
-        // a period with no tasks in this range shows "—" instead of a misleading 0%
-        row.innerHTML = `
-          <span class="bar-lbl">${p.label}</span>
-          <span class="bar-track"><span class="bar-fill" style="width:${segPct}%;background:${p.color}"></span></span>
-          <span class="bar-pct">${segTasks.length ? toArabicNum(segPct)+'٪' : '—'}</span>`;
-        byPeriodEl.appendChild(row);
-      });
+      tl = `<div class="ins-trend muted">نحتاج بيانات أكثر للمقارنة بالأسبوع السابق</div>`;
     }
-
-    const weakEl = $('reportWeakDays');
-    weakEl.innerHTML = '';
-    const byCode = {};
-    DAY_CODES.forEach(c=> byCode[c] = {sum:0,count:0});
-    perDayFinal.forEach(({date,tasks})=>{
-      if(tasks.length===0) return;
-      const code = dayCodeFor(date);
-      byCode[code].sum += pct(tasks);
-      byCode[code].count += 1;
+    return `<div class="report-card ins-summary">
+      <div class="ins-row">
+        <div class="ins-big-wrap"><div class="ins-big">${bigPct==null?'—':toArabicNum(bigPct)+'٪'}</div><div class="ins-lbl">${bigLbl}</div></div>
+        <div class="ins-mini"><div class="ins-mini-n">${toArabicNum(ov.recordedDays)}</div><div class="ins-lbl">أيام مسجلة</div></div>
+        <div class="ins-mini"><div class="ins-mini-n">${ov.overallRatePct==null?'—':toArabicNum(ov.overallRatePct)+'٪'}</div><div class="ins-lbl">آخر ٣٠ يومًا</div></div>
+      </div>${tl}</div>`;
+  }
+  function insPeriods(rep){
+    if(rep.periodStatus!=='ok') return insCard('أوقات أدائك', `<p class="ins-empty">نحتاج أيامًا أكثر لاكتشاف أفضل أوقات أدائك</p>`);
+    const b = rep.bestPeriod, w = rep.weakestPeriod;
+    let bars = '';
+    PERIODS.forEach(p=>{
+      const st = rep.periods[p.key]; if(!st || st.expected===0) return;
+      const faint = st.sampleSize < 5;
+      bars += `<div class="ins-bar-row${faint?' faint':''}"><span class="ins-bar-lbl">${p.label}</span>`
+        + `<span class="ins-bar-track"><span class="ins-bar-fill" style="width:${st.ratePct||0}%;background:${p.color}"></span></span>`
+        + `<span class="ins-bar-pct">${toArabicNum(st.ratePct)}٪${faint?' <em>بيانات قليلة</em>':''}</span></div>`;
     });
-    const weakSorted = DAY_CODES
-      .map(c=>({code:c, avg: byCode[c].count ? Math.round(byCode[c].sum/byCode[c].count) : null}))
-      .filter(x=>x.avg!==null)
-      .sort((a,b)=>a.avg-b.avg);
-    if(weakSorted.length===0){
-      weakEl.innerHTML = '<p class="empty" style="padding:10px 0;">لا بيانات كافية بعد</p>';
-    } else {
-      weakSorted.forEach(x=>{
-        const item = document.createElement('div');
-        item.className='missing-day-item';
-        item.innerHTML = `<span>${DAY_LABELS[x.code]}</span><span class="tasks-mini">${toArabicNum(x.avg)}٪ متوسط الإنجاز</span>`;
-        weakEl.appendChild(item);
-      });
-    }
-
-    const missEl = $('reportMissedTasks');
-    missEl.innerHTML = '';
-    const missCount = {};
-    perDayFinal.forEach(({tasks})=>{
-      tasks.forEach(t=>{
-        if(!t.done){
-          missCount[t.title] = (missCount[t.title]||0)+1;
-        }
-      });
+    const bw = `<div class="ins-bw">
+      <div class="ins-bw-item best"><div class="ins-bw-t">أفضل فترة</div><div class="ins-bw-v">${periodLbl(b.period)}</div><div class="ins-bw-s">أنجزت ${toArabicNum(b.completed)} من ${toArabicNum(b.expected)} · ${toArabicNum(b.ratePct)}٪</div></div>
+      <div class="ins-bw-item weak"><div class="ins-bw-t">أضعف فترة</div><div class="ins-bw-v">${periodLbl(w.period)}</div><div class="ins-bw-s">أنجزت ${toArabicNum(w.completed)} من ${toArabicNum(w.expected)} · ${toArabicNum(w.ratePct)}٪</div></div></div>`;
+    return insCard('أوقات أدائك', bw + '<div class="ins-bars">'+bars+'</div>');
+  }
+  function insConsistent(list){
+    if(!list.length) return insCard('مهام راسخة', `<p class="ins-empty">لم تتكوّن مهام راسخة بعد</p>`);
+    const rows = list.slice(0,5).map(r=>`<div class="ins-task-row"><span class="t">${escapeHtml(r.title)}</span><span class="s">${toArabicNum(r.completed)} / ${toArabicNum(r.expected)} · ${toArabicNum(r.ratePct)}٪</span></div>`).join('');
+    return insCard('مهام راسخة', rows);
+  }
+  function insStruggling(list){
+    if(!list.length) return insCard('مهام تحتاج مراجعة', `<p class="ins-empty">لا مهام تحتاج مراجعة حاليًا</p>`);
+    const rows = list.slice(0,5).map(r=>`<div class="ins-task-row struggle"><span class="t">${escapeHtml(r.title)}</span><span class="s">أنجزت ${toArabicNum(r.completed)} من ${toArabicNum(r.expected)} · فاتتك ${toArabicNum(r.missed)} ${r.missed===1?'مرة':'مرات'}</span></div>`).join('');
+    return insCard('مهام تحتاج مراجعة', rows);
+  }
+  function insWeekday(rep){
+    if(rep.weekdayStatus!=='ok') return insCard('نمط الأسبوع', `<p class="ins-empty">نحتاج أيامًا أكثر لاكتشاف نمط أسبوعك</p>`);
+    const b = rep.bestWeekday, w = rep.weakestWeekday;
+    return insCard('نمط الأسبوع', `<div class="ins-bw">
+      <div class="ins-bw-item best"><div class="ins-bw-t">أفضل يوم</div><div class="ins-bw-v">${DAY_LABELS[b.code]}</div><div class="ins-bw-s">${toArabicNum(b.ratePct)}٪</div></div>
+      <div class="ins-bw-item weak"><div class="ins-bw-t">أضعف يوم</div><div class="ins-bw-v">${DAY_LABELS[w.code]}</div><div class="ins-bw-s">${toArabicNum(w.ratePct)}٪</div></div></div>`);
+  }
+  function insHourly(hourly){
+    const strong = (hourly||[]).filter(h=>h.expected>=5).sort((a,b)=>b.rate-a.rate).slice(0,3);
+    if(!strong.length) return '';
+    const rows = strong.map(h=>`<div class="ins-task-row"><span class="t">${toArabicNum(h.hour)}:٠٠</span><span class="s">${toArabicNum(h.ratePct)}٪ · ${toArabicNum(h.completed)}/${toArabicNum(h.expected)}</span></div>`).join('');
+    return insCard('أفضل ساعات إنجازك', rows);
+  }
+  function insRecs(recs){
+    const txt = recs.map(r=>{
+      if(r.kind==='struggling') return `مهمة «${escapeHtml(r.title)}» يصعب الالتزام بها حاليًا — أنجزتها ${toArabicNum(r.completed)} من ${toArabicNum(r.expected)} مرات. جرّب مراجعة توقيتها أو تكرارها.`;
+      if(r.kind==='period_gap') return `أداؤك في ${periodLbl(r.bestPeriod)} أعلى بوضوح من ${periodLbl(r.weakPeriod)}. قد يناسبك وضع المهام التي تحتاج مجهودًا أكبر في الفترة الأقوى.`;
+      return 'استمر في التسجيل عدة أيام أخرى حتى تظهر توصيات أدق.';
     });
-    const missSorted = Object.entries(missCount).sort((a,b)=>b[1]-a[1]).slice(0,6);
-    if(missSorted.length===0){
-      missEl.innerHTML = '<p class="empty" style="padding:10px 0;">ما فيش مهام متفوتة، أحسنت 🎉</p>';
-    } else {
-      missSorted.forEach(([title,count])=>{
-        const item = document.createElement('div');
-        item.className='missing-day-item';
-        item.innerHTML = `<span>${escapeHtml(title)}</span><span class="tasks-mini">فاتت ${toArabicNum(count)} ${count===1?'مرة':'مرات'}</span>`;
-        missEl.appendChild(item);
-      });
-    }
+    return insCard('توصية', txt.map(t=>`<p class="ins-rec">${t}</p>`).join(''));
+  }
+  function insUnrecordedNote(ov){
+    if(ov.unrecordedDays >= 3 && ov.unrecordedDays >= ov.recordedDays)
+      return `<p class="ins-note">بعض الأيام لم تُسجّل، لذلك التحليل يعتمد على الأيام التي تابعتها فقط.</p>`;
+    return '';
   }
 
   function openReports(){
@@ -1782,14 +1777,6 @@
   $('dayClose').addEventListener('click', closeDayOverview);
   $('dayOverlay').addEventListener('click', (e)=>{ if(e.target.id==='dayOverlay') closeDayOverview(); });
   { const cd = $('copyDiag'); if(cd) cd.addEventListener('click', copyDiag); }
-  Array.from(document.querySelectorAll('.report-tab')).forEach(tab=>{
-    tab.addEventListener('click', ()=>{
-      reportRange = tab.dataset.range;
-      Array.from(document.querySelectorAll('.report-tab')).forEach(t=>t.classList.remove('active'));
-      tab.classList.add('active');
-      renderReports();
-    });
-  });
 
   // theme toggle (main header)
   $('themeToggle').addEventListener('click', (e)=>{

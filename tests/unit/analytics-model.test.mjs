@@ -220,3 +220,54 @@ test('hourly extraction uses only structured timeValue', () => {
   const five = h.find((x) => x.hour === 5); // good is 05:30, done every recorded day
   assert.ok(five); assert.equal(five.expected, 30); assert.equal(five.completed, 30);
 });
+
+// ---------------- I1: overview + deterministic recommendations ----------------
+const RANGE2 = { from: '2026-09-01', to: '2026-10-01', today: TODAY2 };
+
+test('overview tallies recorded/unrecorded and the range rate', () => {
+  const ov = A.overview(fixture2(), RANGE2);
+  assert.equal(ov.recordedDays, 30);          // all of September tracked
+  assert.ok(ov.unrecordedDays >= 1);          // Oct 1 expected but not tracked (today, excluded from rate)
+  assert.equal(ov.overallRatePct, 67);        // 2 of 3 done each day
+});
+
+test('recommendations: struggling task + clear period gap, no duplicates, max 2', () => {
+  const rep = A.report(fixture2(), RANGE2);
+  const recs = A.recommendations(rep, A.overview(fixture2(), RANGE2));
+  assert.ok(recs.length <= 2);
+  const kinds = recs.map((r) => r.kind);
+  assert.ok(kinds.includes('struggling'));
+  assert.equal(recs.find((r) => r.kind === 'struggling').title, 'العصر'); // the never-done daily
+  assert.ok(kinds.includes('period_gap'));    // fajr/dhuhr 100% vs asr 0% → clear gap
+  assert.equal(new Set(kinds).size, kinds.length); // no duplicate kinds
+});
+
+test('recommendations: insufficient data → keep_logging only', () => {
+  const rep = A.report(fixture1(), OPT1); // sparse
+  const recs = A.recommendations(rep, A.overview(fixture1(), OPT1));
+  assert.deepEqual(recs.map((r) => r.kind), ['keep_logging']);
+});
+
+test('recommendations: a small period gap (and no struggling) is gated out → keep_logging', () => {
+  // 20 recorded days; fajr ~70%, asr ~60% (gap 0.1 < 0.25); neither struggling (miss < 50%)
+  const logs = {};
+  for (let d = 11; d <= 30; d++) {
+    const key = `2026-09-${String(d).padStart(2, '0')}`;
+    const i = d - 11;
+    const done = {}; if (i % 10 < 7) done.pA = true; if (i % 10 < 6) done.pB = true;
+    logs[key] = log({ done });
+  }
+  const b = {
+    prefs: { dayTimezone: 'Africa/Cairo' }, migrationDate: '2026-09-01',
+    template: { sat: [], sun: [], mon: [], tue: [], wed: [], thu: [], fri: [] }, tplArchive: { since: '0000-00-00', versions: [] },
+    routines: {
+      pA: { id: 'pA', seriesId: 'pA', title: 'أ', time: '', timeValue: null, period: 'fajr', order: 0, rec: { freq: 'daily', from: '2026-09-01', to: null } },
+      pB: { id: 'pB', seriesId: 'pB', title: 'ب', time: '', timeValue: null, period: 'asr', order: 1, rec: { freq: 'daily', from: '2026-09-01', to: null } },
+    },
+    logs,
+  };
+  const opt = { from: '2026-09-11', to: '2026-10-01', today: TODAY2 };
+  const rep = A.report(b, opt);
+  assert.equal(rep.periodStatus, 'ok');                         // enough sample to rank
+  assert.deepEqual(A.recommendations(rep, A.overview(b, opt)).map((r) => r.kind), ['keep_logging']); // but gap too small
+});
