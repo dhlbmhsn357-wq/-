@@ -134,6 +134,51 @@
       const NB = plugin('NotifBridge'); if (!isNativeAndroid() || !NB) return { permission: 'unsupported' };
       try { return await NB.requestPermission(); } catch (e) { return { permission: 'unknown' }; }
     },
+    // ---- One-shot device location (prayer-time reminders). Native path via LocationBridge; never at startup. ----
+    hasNativeLocation() { return isNativeAndroid() && !!plugin('LocationBridge'); },
+    location: {
+      async checkStatus() {
+        const LB = plugin('LocationBridge'); if (!isNativeAndroid() || !LB) return { permission: 'unsupported' };
+        try { return await LB.checkStatus(); } catch (e) { return { permission: 'unknown' }; }
+      },
+      async requestPermission() {
+        const LB = plugin('LocationBridge'); if (!isNativeAndroid() || !LB) return { permission: 'unsupported' };
+        try { return await LB.requestPermission(); } catch (e) { return { permission: 'unknown' }; }
+      },
+      // Resolves { lat, lng, precise } or throws with a reason: 'permission' | 'services' | 'timeout' | 'no_fix'.
+      async getCurrent() {
+        const LB = plugin('LocationBridge'); if (!isNativeAndroid() || !LB) throw new Error('unsupported');
+        return await LB.getCurrent();
+      },
+      async openSettings() {
+        const LB = plugin('LocationBridge'); if (!isNativeAndroid() || !LB) return { skipped: true };
+        try { await LB.openSettings(); return { ok: true }; } catch (e) { return { error: true }; }
+      },
+    },
+    // ---- Direct-APK in-app updater (native only; absent in a Play build). Decisions live in AyyamUpdate. ----
+    updaterConfigured() { return isNativeAndroid() && !!plugin('UpdaterBridge'); },
+    updater: {
+      async canInstall() {
+        const UB = plugin('UpdaterBridge'); if (!isNativeAndroid() || !UB) return { canInstall: false };
+        try { return await UB.canInstall(); } catch (e) { return { canInstall: false }; }
+      },
+      async openInstallSettings() {
+        const UB = plugin('UpdaterBridge'); if (!isNativeAndroid() || !UB) return;
+        try { await UB.openInstallSettings(); } catch (e) {}
+      },
+      async download(url, sha256) {
+        const UB = plugin('UpdaterBridge'); if (!isNativeAndroid() || !UB) throw new Error('unsupported');
+        return await UB.download({ url, sha256 });
+      },
+      async install(path) {
+        const UB = plugin('UpdaterBridge'); if (!isNativeAndroid() || !UB) throw new Error('unsupported');
+        return await UB.install({ path });
+      },
+      onProgress(fn) {
+        const UB = plugin('UpdaterBridge'); if (!isNativeAndroid() || !UB || typeof fn !== 'function') return;
+        try { UB.addListener('downloadProgress', fn); } catch (e) {}
+      },
+    },
   };
   global.AyyamNative = AyyamNative;
 })(typeof globalThis !== 'undefined' ? globalThis : window);
