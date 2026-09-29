@@ -18,6 +18,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="js/storage.js"></script>
 <script src="js/sync-model.js"></script>
+<script src="js/time-model.js"></script>
+<script src="js/routines-model.js"></script>
+<script src="js/analytics-model.js"></script>
+<script src="js/adhan.umd.min.js"></script>
+<script src="js/overdue-model.js"></script>
+<script src="js/update-model.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
 <link rel="stylesheet" href="css/app.css">
 </head>
@@ -56,6 +62,7 @@
       </div>
       <button class="icon-btn hidden" id="installBtn" aria-label="تثبيت التطبيق">⬇</button>
       <button class="icon-btn hidden" id="notifyBtn" aria-label="تفعيل الإشعارات">🔔</button>
+      <button class="icon-btn" id="openCalendar" aria-label="التقويم الشهري">🗓</button>
       <button class="icon-btn" id="openReports" aria-label="التقارير">📊</button>
       <button class="icon-btn" id="openSettings" aria-label="القالب الأسبوعي">⚙</button>
     </div>
@@ -107,16 +114,37 @@
       <input id="taskTitle" type="text" placeholder="مثال: مراجعة حفظ جديد">
     </div>
     <div class="field">
-      <label for="taskTime">الوقت (اختياري)</label>
-      <input id="taskTime" type="text" placeholder="مثال: العصر – المغرب">
-    </div>
-    <div class="field">
       <label id="periodPickLbl">مرتبطة بـ</label>
       <div class="period-pick" id="periodPick" role="group" aria-labelledby="periodPickLbl"></div>
+    </div>
+    <div class="field">
+      <label for="taskTimeValue">الوقت</label>
+      <div class="time-row">
+        <input id="taskTimeValue" type="time" aria-label="وقت المهمة">
+        <label class="notime-lbl"><input type="checkbox" id="taskNoTime"> بدون وقت محدد</label>
+      </div>
+    </div>
+    <div class="field" id="recurrenceField">
+      <label id="recPickLbl">التكرار</label>
+      <div class="rec-pick" id="recPick" role="group" aria-labelledby="recPickLbl"></div>
+      <div class="weekday-pick hidden" id="weekdayPick" role="group" aria-label="أيام التكرار"></div>
     </div>
     <div class="sheet-actions">
       <button class="btn ghost" id="cancelAdd">إلغاء</button>
       <button class="btn primary" id="saveAdd">إضافة</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scope chooser for editing/deleting a recurring routine -->
+<div class="overlay" id="scopeOverlay">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="scopeTitle">
+    <h2 id="scopeTitle">تطبيق على</h2>
+    <p id="scopeMsg" style="color:var(--text-dim);font-size:13px;margin-top:0;"></p>
+    <div class="sheet-actions" style="flex-direction:column;gap:8px;align-items:stretch;">
+      <button class="btn primary" id="scopeToday">هذا اليوم فقط</button>
+      <button class="btn primary" id="scopeFuture">هذا اليوم وما بعده</button>
+      <button class="btn ghost" id="scopeCancel">إلغاء</button>
     </div>
   </div>
 </div>
@@ -134,7 +162,7 @@
 
     <div class="tpl-days" id="tplDays" style="margin-top:10px;"></div>
     <div id="tplTasks"></div>
-    <button class="btn primary" id="tplAddTask" style="margin-top:14px;">+ مهمة لهذا اليوم</button>
+    <button class="btn primary" id="tplAddTask" style="margin-top:14px;">+ روتين لهذا اليوم</button>
 
     <div class="report-card" style="margin-top:26px;">
       <h3>المظهر والخلفية</h3>
@@ -176,6 +204,15 @@
       </div>
     </div>
 
+    <div class="report-card hidden" id="widgetPrivacyRow" style="margin-top:14px;">
+      <h3>الودجت</h3>
+      <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <span>إخفاء أسماء المهام في الودجت</span>
+        <span class="toggle-switch"><input type="checkbox" id="widgetPrivacyToggle"><span class="toggle-slider"></span></span>
+      </label>
+      <p class="report-hint" style="margin-top:8px;">عند التفعيل تظهر الودجت عدد المهام المتبقية فقط، دون أسماء المهام.</p>
+    </div>
+
     <div class="report-card" style="margin-top:14px;">
       <h3>تشخيص التطبيق</h3>
       <p class="report-hint" id="diagInfo" style="margin-top:0;white-space:pre-line;line-height:1.9;"></p>
@@ -198,30 +235,68 @@
 <div id="reportsView" class="hidden">
   <header class="top">
     <button class="back-btn" id="closeReports">› رجوع</button>
-    <span class="brand brand-strong">التقارير</span>
+    <span class="brand brand-strong">تحليل الأداء</span>
   </header>
   <div class="wrap">
-    <div class="report-tabs">
-      <button class="report-tab active" data-range="week">هذا الأسبوع</button>
-      <button class="report-tab" data-range="month">هذا الشهر</button>
-      <button class="report-tab" data-range="all">كل الوقت</button>
-    </div>
+    <p class="ins-subtitle">نظرة على أنماط إنجازك خلال آخر ٣٠ يومًا</p>
+    <div id="insBody"></div>
+  </div>
+</div>
 
-    <div class="report-card">
-      <h3>نسبة الإنجاز حسب الفترة</h3>
-      <div id="reportByPeriod"></div>
+<!-- Calendar month view -->
+<div id="calendarView" class="hidden">
+  <header class="top">
+    <button class="back-btn" id="closeCalendar">› رجوع</button>
+    <span class="brand brand-strong">التقويم</span>
+  </header>
+  <div class="wrap">
+    <div class="cal-head">
+      <button class="icon-btn" id="calPrev" aria-label="الشهر السابق">›</button>
+      <div class="cal-title" id="calTitle">—</div>
+      <button class="icon-btn" id="calNext" aria-label="الشهر التالي">‹</button>
     </div>
+    <button class="cal-today-btn hidden" id="calToday">العودة لهذا الشهر</button>
 
-    <div class="report-card">
-      <h3>الأيام الأضعف</h3>
-      <p class="report-hint">الأيام المكتملة فقط، لا يشمل اليوم الحالي</p>
-      <div id="reportWeakDays" class="period-report"></div>
+    <div class="cal-weekdays" id="calWeekdays" aria-hidden="true"></div>
+    <div class="cal-grid" id="calGrid" role="grid" aria-label="أيام الشهر"></div>
+
+    <div class="cal-legend" id="calLegend"></div>
+
+    <div class="report-card cal-summary" id="calSummary"></div>
+  </div>
+</div>
+
+<!-- Daily overview bottom sheet -->
+<div class="overlay" id="dayOverlay">
+  <div class="sheet day-sheet" role="dialog" aria-modal="true" aria-labelledby="daySheetTitle">
+    <div class="day-sheet-head">
+      <button class="icon-btn" id="dayPrev" aria-label="اليوم السابق">›</button>
+      <h2 id="daySheetTitle">—</h2>
+      <button class="icon-btn" id="dayNext" aria-label="اليوم التالي">‹</button>
     </div>
+    <div id="dayBody"></div>
+    <div class="sheet-actions">
+      <button class="btn ghost" id="dayClose">إغلاق</button>
+    </div>
+  </div>
+</div>
 
-    <div class="report-card">
-      <h3>الأكثر تفويتًا</h3>
-      <p class="report-hint">الأيام المكتملة فقط، لا يشمل اليوم الحالي</p>
-      <div id="reportMissedTasks" class="period-report"></div>
+<!-- In-app update sheet (Android direct-APK flow; web uses the SW pill directly) -->
+<div class="overlay" id="updateOverlay">
+  <div class="sheet update-sheet" role="dialog" aria-modal="true" aria-labelledby="updateSheetTitle">
+    <div class="day-sheet-head"><h2 id="updateSheetTitle">يوجد تحديث جديد لأيام</h2></div>
+    <div class="update-sheet-body">
+      <div class="update-ver" id="updateSheetVersion">إصدار جديد</div>
+      <p class="update-notes" id="updateSheetNotes">تحسينات وإصلاحات.</p>
+      <div class="update-progress hidden" id="updateProgress">
+        <div class="update-progress-head"><span>جارٍ تنزيل التحديث…</span><span id="updateProgressPct">٠٪</span></div>
+        <div class="day-progress-bar"><div class="day-progress-fill" id="updateProgressFill" style="width:0%"></div></div>
+      </div>
+      <p class="update-hint">سيطلب النظام تأكيد التثبيت، وستبقى بياناتك كما هي.</p>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn primary" id="updateInstall">تحديث الآن</button>
+      <button class="btn ghost" id="updateClose">لاحقًا</button>
     </div>
   </div>
 </div>

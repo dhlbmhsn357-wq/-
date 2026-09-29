@@ -21,7 +21,9 @@ jobs:
       - name: Unit + database (PGlite) tests
         run: npm test
       - name: Dependency audit
-        run: npm audit --audit-level=high
+        # The app ships ZERO runtime deps (dependencies: {}); everything is build-time dev tooling
+        # (Capacitor CLI etc.) that never reaches the web bundle or the APK. Audit what actually ships.
+        run: npm audit --omit=dev --audit-level=high
 
   postgres:
     name: postgres-concurrency

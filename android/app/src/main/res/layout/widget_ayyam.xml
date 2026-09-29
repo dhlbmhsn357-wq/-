@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ayyam widget, 4x2 base. RTL Arabic. The provider fills text + toggles visibility per state. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:layoutDirection="rtl"
+    android:background="@drawable/widget_bg"
+    android:padding="14dp">
+
+    <!-- Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+        <TextView
+            android:id="@+id/w_brand"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="أيام"
+            android:textColor="#E8B84B"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/w_date"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#9AA3B2"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Progress -->
+    <LinearLayout
+        android:id="@+id/w_progress_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="8dp">
+        <TextView
+            android:id="@+id/w_progress_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#F2EFE6"
+            android:textSize="13sp"
+            android:layout_marginStart="10dp" />
+        <ProgressBar
+            android:id="@+id/w_progress_bar"
+            style="@android:style/Widget.ProgressBar.Horizontal"
+            android:layout_width="0dp"
+            android:layout_height="6dp"
+            android:layout_weight="1"
+            android:max="100"
+            android:progressTint="#E8B84B" />
+    </LinearLayout>
+
+    <!-- Message (all-done / empty / stale / no-snapshot) -->
+    <TextView
+        android:id="@+id/w_message"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:textColor="#F2EFE6"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <!-- Next -->
+    <LinearLayout
+        android:id="@+id/w_next_block"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="10dp">
+        <TextView
+            android:id="@+id/w_next_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="التالي"
+            android:textColor="#9AA3B2"
+            android:textSize="11sp" />
+        <TextView
+            android:id="@+id/w_next_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#F2EFE6"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+        <TextView
+            android:id="@+id/w_next_time"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#E8B84B"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Task rows -->
+    <TextView android:id="@+id/w_row0" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:maxLines="1" android:ellipsize="end" android:textColor="#CFD6E4" android:textSize="13sp" android:visibility="gone" />
+    <TextView android:id="@+id/w_row1" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:maxLines="1" android:ellipsize="end" android:textColor="#CFD6E4" android:textSize="13sp" android:visibility="gone" />
+    <TextView android:id="@+id/w_row2" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:maxLines="1" android:ellipsize="end" android:textColor="#CFD6E4" android:textSize="13sp" android:visibility="gone" />
+    <TextView android:id="@+id/w_row3" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:maxLines="1" android:ellipsize="end" android:textColor="#CFD6E4" android:textSize="13sp" android:visibility="gone" />
+    <TextView android:id="@+id/w_row4" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:maxLines="1" android:ellipsize="end" android:textColor="#CFD6E4" android:textSize="13sp" android:visibility="gone" />
+</LinearLayout>

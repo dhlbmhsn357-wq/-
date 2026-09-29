@@ -4,13 +4,15 @@ import { prepare, resetBackend, addTask, waitSynced, waitSWControls, expectServe
 test.beforeEach(async ({ request }) => { await resetBackend(request); await request.post('/__ctl/sw-version?v='); });
 test.afterEach(async ({ request }) => { await request.post('/__ctl/sw-version?v='); }); // reset SW override
 
-test('the app is installable: manifest is valid with icons and start_url', async ({ page }) => {
+test('the app is installable: manifest is valid with icons and start_url', async ({ page, request }) => {
   await prepare(page, { key: true });
   await page.goto('/');
-  const manifest = await page.evaluate(async () => {
-    const href = document.querySelector('link[rel=manifest]').href;
-    return (await fetch(href)).json();
-  });
+  // The SW calls clients.claim() on activate and the app reloads once on controllerchange (app.js).
+  // Reading the manifest via page.evaluate races that one-time reload ("execution context destroyed").
+  // Fetch it through the API request context instead — it is independent of the page, so a navigation
+  // cannot destroy it. We still assert the <link rel=manifest> is present in the document.
+  await expect(page.locator('head link[rel="manifest"]')).toHaveCount(1);
+  const manifest = await (await request.get('/manifest.webmanifest')).json();
   expect(manifest.name).toBeTruthy();
   expect(manifest.start_url).toBeTruthy();
   expect(manifest.display).toBe('standalone');

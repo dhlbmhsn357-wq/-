@@ -1,0 +1,128 @@
+name: Android
+
+on:
+  push:
+    branches: [android-v1]
+  pull_request:
+    branches: [android-v1]
+
+permissions:
+  contents: read
+
+jobs:
+  android-build:
+    name: android-build-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - name: Accept Android SDK licenses (preinstalled SDK on runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+      - name: Install JS deps
+        run: npm ci
+      - name: Security scan (no Firebase/FCM, no secrets, release locked down)
+        run: bash scripts/security-scan.sh
+      - name: Assemble web dir (native-only injection) + Capacitor sync
+        run: |
+          node scripts/build-webdir.mjs
+          npx cap sync android
+      - name: Build Debug APK + JVM unit tests + lint
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --stacktrace
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ayyam-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+  android-emulator:
+    name: android-emulator-persistence
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - name: Accept Android SDK licenses (preinstalled SDK on runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+      - name: Install JS deps + assemble web dir + sync
+        run: |
+          npm ci
+          node scripts/build-webdir.mjs
+          npx cap sync android
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build APK + test APK
+        run: |
+          cd android && chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+      - name: Persistence proofs on emulator (process-death / reboot / reinstall / offline)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash scripts/android-persistence.sh
+      - name: Upload widget screenshots (redesign visual review)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ayyam-widget-shots
+          path: widget-shots-out
+          retention-days: 14
+          if-no-files-found: ignore
+
+  android-sync-e2e:
+    name: android-sync-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - name: Accept Android SDK licenses (preinstalled SDK on runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+      - name: Install JS deps
+        run: npm ci
+      # AYYAM_E2E build: real client, @supabase CDN swapped for the isolated-backend stand-in, http
+      # scheme (cleartext to 10.0.2.2, no mixed content). The E2E capacitor config is used ONLY here.
+      - name: Assemble E2E web dir + Capacitor sync (http scheme, isolated backend)
+        run: |
+          cp capacitor.config.e2e.json capacitor.config.json
+          AYYAM_E2E=1 node scripts/build-webdir.mjs
+          npx cap sync android
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build E2E APK + test APK
+        run: |
+          cd android && chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+      - name: WebView ↔ backend sync E2E on emulator (isolated backend on host)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash scripts/android-sync-e2e.sh

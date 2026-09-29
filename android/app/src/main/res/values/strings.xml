@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">أيام</string>
+    <string name="title_activity_main">أيام</string>
+    <string name="package_name">com.ayyam.app</string>
+    <string name="custom_url_scheme">com.ayyam.app</string>
+    <string name="widget_label">أيام — مهام اليوم</string>
+    <string name="widget_description">مهامك لليوم في لمحة</string>
+</resources>

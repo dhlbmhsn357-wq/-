@@ -34,7 +34,7 @@ export async function waitSWControls(page) {
 export async function addTask(page, title, { time, period } = {}) {
   await page.locator('#fabAdd').click();
   await page.locator('#taskTitle').fill(title);
-  if (time) await page.locator('#taskTime').fill(time);
+  if (time) { await page.locator('#taskNoTime').uncheck().catch(() => {}); await page.locator('#taskTimeValue').fill(time); } // structured "HH:MM"
   if (period) await page.locator('#periodPick .period-chip', { hasText: period }).click();
   await page.locator('#saveAdd').click();
   await expect(page.locator('.task-title', { hasText: title })).toBeVisible();

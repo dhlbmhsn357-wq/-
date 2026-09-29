@@ -1,0 +1,134 @@
+name: Android Release
+
+# Phase H — build a SIGNED release APK + AAB for side-load testing (NOT a Play upload). Manual only.
+# Signing material is never committed: it comes from repo secrets if present, otherwise a throwaway
+# keystore is generated in-job and published as a private artifact so the owner can adopt it as a
+# stable key. The normal (non-E2E) web bundle + https capacitor config are used, so no test/mock
+# assets can leak into the release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # create the (DRAFT) GitHub Release that hosts the APK + update.json for the in-app updater
+
+jobs:
+  release:
+    name: android-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - name: Accept Android SDK licenses (preinstalled SDK on runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+      - name: Install JS deps
+        run: npm ci
+      - name: Final security scan (no Firebase/FCM, no secrets, release locked down)
+        run: bash scripts/security-scan.sh
+      - name: Assemble NORMAL web dir (no E2E) + Capacitor sync
+        run: |
+          node scripts/build-webdir.mjs
+          npx cap sync android
+      - name: Prepare signing keystore (repo secret if present, else throwaway)
+        id: ks
+        run: |
+          KS="$RUNNER_TEMP/ayyam-release.jks"
+          if [ -n "${{ secrets.AYYAM_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.AYYAM_KEYSTORE_BASE64 }}" | base64 -d > "$KS"
+            PW='${{ secrets.AYYAM_KEYSTORE_PASSWORD }}'; ALIAS='${{ secrets.AYYAM_KEY_ALIAS }}'; KPW='${{ secrets.AYYAM_KEY_PASSWORD }}'
+            echo "ephemeral=false" >> "$GITHUB_OUTPUT"
+          else
+            PW="$(openssl rand -hex 18)"; ALIAS="ayyam"; KPW="$PW"
+            keytool -genkeypair -v -keystore "$KS" -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PW" -keypass "$PW" -dname "CN=Ayyam, O=Ayyam, C=EG" >/dev/null
+            printf 'keystore: ayyam-release.jks\nstorePassword: %s\nkeyAlias: %s\nkeyPassword: %s\n' "$PW" "$ALIAS" "$PW" > "$RUNNER_TEMP/keystore-credentials.txt"
+            echo "ephemeral=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "::add-mask::$PW"; [ -n "$KPW" ] && echo "::add-mask::$KPW"
+          { echo "AYYAM_RELEASE_STORE_FILE=$KS"; echo "AYYAM_RELEASE_STORE_PASSWORD=$PW";
+            echo "AYYAM_RELEASE_KEY_ALIAS=$ALIAS"; echo "AYYAM_RELEASE_KEY_PASSWORD=$KPW"; } >> "$GITHUB_ENV"
+      - name: Build signed release APK + AAB, lint, unit tests
+        run: |
+          cd android && chmod +x ./gradlew
+          ./gradlew :app:assembleRelease :app:bundleRelease :app:testDebugUnitTest :app:lintDebug --stacktrace
+      - name: Verify release hardening (debuggable/cleartext/no-secrets/no-E2E assets)
+        run: |
+          set -e
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          echo "== APK: $APK =="
+          # debuggable must be OFF
+          if "$AAPT" dump badging "$APK" | grep -qi "application-debuggable"; then echo "FAIL: release APK is debuggable"; exit 1; fi
+          echo "ok: not debuggable"
+          # cleartext must NOT be enabled in the release manifest
+          if "$AAPT" dump xmltree "$APK" AndroidManifest.xml | grep -iA1 "usesCleartextTraffic" | grep -qi "0xffffffff"; then echo "FAIL: cleartext enabled in release"; exit 1; fi
+          echo "ok: cleartext not enabled"
+          # no E2E/mock/test assets, no backend host, no Firebase in the packaged app
+          if unzip -l "$APK" | grep -iE "mock-supabase-e2e|capacitor.config.e2e|google-services"; then echo "FAIL: test/E2E/Firebase asset in release"; exit 1; fi
+          if unzip -p "$APK" assets/public/index.html | grep -iE "10.0.2.2|mock-supabase-e2e"; then echo "FAIL: E2E backend reference in release index.html"; exit 1; fi
+          if unzip -p "$APK" assets/public/js/app.js >/dev/null 2>&1; then
+            if unzip -p "$APK" assets/public/js/mock-supabase-e2e.js >/dev/null 2>&1; then echo "FAIL: E2E mock shipped"; exit 1; fi
+          fi
+          echo "ok: no test/E2E/Firebase assets"
+          echo "== signing certificate (SHA-256) =="
+          "$APKSIGNER" verify --print-certs "$APK" | grep -i "SHA-256" || true
+          echo "== APK sha256 =="; sha256sum "$APK"
+          echo "== AAB =="; ls -l android/app/build/outputs/bundle/release/app-release.aab; sha256sum android/app/build/outputs/bundle/release/app-release.aab
+          echo "== versions =="; grep -E "versionCode|versionName" android/app/build.gradle
+      - name: Generate update.json for the in-app updater (real versionCode/sha256/apkUrl)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -e
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          SHA=$(sha256sum "$APK" | awk '{print $1}')
+          VC=$(grep -E "versionCode" android/app/build.gradle | grep -oE "[0-9]+" | head -1)
+          VN=$(grep -E 'versionName' android/app/build.gradle | grep -oE '"[^"]+"' | tr -d '"' | head -1)
+          BASE="https://github.com/${{ github.repository }}/releases/latest/download"
+          printf '{\n  "versionCode": %s,\n  "versionName": "%s",\n  "apkUrl": "%s/app-release.apk",\n  "sha256": "%s",\n  "mandatory": false,\n  "notes": "تحديث أيام %s"\n}\n' \
+            "$VC" "$VN" "$BASE" "$SHA" "$VN" > update.release.json
+          echo "== generated update.json =="; cat update.release.json
+      - name: Publish DRAFT GitHub Release (hosts APK + update.json; owner clicks Publish to go live)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cp android/app/build/outputs/bundle/release/app-release.aab app-release.aab
+          cp android/app/build/outputs/apk/release/app-release.apk app-release.apk
+          cp update.release.json update.json
+          # The release is created as a DRAFT: it is NOT public until the owner clicks Publish. Publishing it
+          # makes releases/latest/download/{app-release.apk,update.json} live, which is what the app fetches.
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" app-release.apk app-release.aab update.json --clobber
+          else
+            gh release create "${{ github.ref_name }}" app-release.apk app-release.aab update.json \
+              --draft --title "أيام ${{ github.ref_name }}" \
+              --notes "إصدار موقّع بالمفتاح الدائم. انشر هذا الإصدار (Publish) ليصل التحديث داخل التطبيق تلقائيًا. التثبيت يتطلب تأكيد المستخدم من شاشة النظام."
+          fi
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ayyam-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+      - name: Upload release AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: ayyam-release-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          retention-days: 30
+      - name: Upload throwaway keystore (only if generated in-job; adopt as a stable key if you want)
+        if: steps.ks.outputs.ephemeral == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ayyam-release-keystore-KEEP-PRIVATE
+          path: |
+            ${{ runner.temp }}/ayyam-release.jks
+            ${{ runner.temp }}/keystore-credentials.txt
+          retention-days: 30

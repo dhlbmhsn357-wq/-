@@ -1,0 +1,12 @@
+{
+  "appId": "com.ayyam.app",
+  "appName": "أيام",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": []
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

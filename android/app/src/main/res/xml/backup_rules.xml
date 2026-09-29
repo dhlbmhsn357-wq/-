@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup rules (API 30 and below). Exclude anything that may hold the device key or task names:
+     the Keystore secure store, the Preferences fallback (CapacitorStorage), and the widget snapshot
+     (which can contain task titles when widget privacy is off). Ordinary WebView data uses default backup. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="ayyam_secure_store.xml" />
+    <exclude domain="sharedpref" path="CapacitorStorage.xml" />
+    <exclude domain="sharedpref" path="ayyam_widget.xml" />
+</full-backup-content>
