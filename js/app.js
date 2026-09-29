@@ -87,7 +87,14 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.1.1'; // bump per release; kept in step with sw.js SW_VERSION
+  const APP_VERSION = '5.2.0'; // bump per release; kept in step with sw.js SW_VERSION
+  // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
+  // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
+  // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
+  // never opens GitHub — the app fetches this JSON directly. A Play build ignores this (Play In-App Updates).
+  // See js/update-model.js (validation) and update.json in the repo (format example).
+  const UPDATE_MANIFEST_URL = 'https://github.com/dhlbmhsn357-wq/-/releases/latest/download/update.json';
+  const LS_UPDATE_CHECK = 'ayyam_update_check_v1';
 
   const LS_TPL = 'ayyam_template_v1';
   const LS_LOG = 'ayyam_logs_v1';
@@ -772,6 +779,8 @@
   // Android hardware/system Back: close the top-most thing; exit only when nothing is left to close.
   function handleBack(){
     try{
+      const upd = $('updateOverlay');
+      if(upd && upd.classList.contains('show')){ closeUpdateSheet(); return; }      // 0. update sheet
       const add = $('addOverlay');
       if(add && add.classList.contains('show')){ closeAddSheet(); return; }        // 1. open sheet
       const dayOv = $('dayOverlay');
@@ -826,28 +835,34 @@
     scheduleNotifPlan();  // native-only; re-plan local reminders when today's tasks change
   }
 
+  // OVERDUE card (top of Today). Shows ONLY tasks whose PERIOD has already ended and are still not done
+  // (fajr→dhuhr→asr→maghrib→isha; a period is overdue once the next prayer has begun). It is a TODAY-only
+  // helper — hidden on any other day, and hidden when nothing is overdue (cleaner screen). Widget/calendar/
+  // analytics are unaffected. Source of truth: AyyamOverdue.overdueForNow (pure, prayer-boundary based).
+  function overdueCountNoun(n){
+    if(n===1) return 'مهمة متأخرة عليك';
+    if(n===2) return 'مهمتان متأخرتان عليك';
+    if(n<=10) return toArabicNum(n)+' مهام متأخرة عليك';
+    return toArabicNum(n)+' مهمة متأخرة عليك';
+  }
   function renderMissingBanner(){
     const el = $('missingBanner');
     if(!el) return;
-    const tasks = tasksForDate(selectedDate);
-    const missing = tasks.filter(t=>!t.done);
-    const isFuture = dateKey(selectedDate) > todayKey();
-
-    if(tasks.length===0){ el.classList.add('hidden'); return; }
-    el.classList.remove('hidden');
-
-    if(missing.length===0){
-      el.classList.add('ok');
-      const isToday = dateKey(selectedDate)===todayKey();
-      el.innerHTML = `<div class="missing-head">✅ الحمد لله، كل مهام ${isToday ? 'اليوم' : 'هذا اليوم'} متكاملة</div>`;
-      return;
-    }
     el.classList.remove('ok');
-    const verb = isFuture ? 'مخطط لها' : 'ناقصة عليك';
+    const isToday = dateKey(selectedDate)===todayKey();
+    if(!isToday){ el.classList.add('hidden'); return; }        // "overdue" only makes sense for today
+    let res = null;
+    try{ res = AyyamOverdue.overdueForNow(currentBundle(), { now: Date.now(), today: todayKey() }); }catch(e){}
+    if(!res || !res.available || res.count===0){ el.classList.add('hidden'); return; } // nothing late → hide
+    el.classList.remove('hidden');
+    const MAX = 6;
+    const shown = res.tasks.slice(0, MAX);
+    const rest = res.count - shown.length;
     el.innerHTML = `
-      <div class="missing-head">⏳ ${toArabicNum(missing.length)} مهمة ${verb}</div>
+      <div class="missing-head">⏳ ${overdueCountNoun(res.count)}</div>
       <div class="missing-list">
-        ${missing.map(t=>`<span class="missing-chip">${escapeHtml(t.title)}</span>`).join('')}
+        ${shown.map(t=>`<span class="missing-chip">${escapeHtml(t.title)}</span>`).join('')}
+        ${rest>0 ? `<span class="missing-chip more">+ ${toArabicNum(rest)} أخرى</span>` : ''}
       </div>`;
   }
 
@@ -1394,6 +1409,16 @@
           nativeLines.push('التذكيرات المحلية: ' + (ns.permission==='granted' ? 'مفعّلة' : 'غير مفعّلة') + (typeof ns.count==='number' ? ' · مجدولة ' + toArabicNum(ns.count) : ''));
           if(ns.generatedAt) nativeLines.push('آخر جدولة تذكيرات: ' + relTime(Date.parse(ns.generatedAt)));
         }
+        // Location diagnostics — non-sensitive ONLY (permission / precise / services / last update / source).
+        // Never the coordinates themselves.
+        if(AyyamNative.hasNativeLocation && AyyamNative.hasNativeLocation()){
+          const ls = await AyyamNative.location.checkStatus();
+          if(ls && ls.permission!=='unsupported'){
+            nativeLines.push('إذن الموقع: ' + (ls.permission==='granted' ? 'مسموح' : 'غير مسموح') + (ls.permission==='granted' ? ' · ' + (ls.precise ? 'دقيق' : 'تقريبي') : ''));
+            nativeLines.push('خدمة الموقع (GPS): ' + (ls.servicesEnabled ? 'مفعّلة' : 'مغلقة'));
+          }
+          if(locDiag.at) nativeLines.push('آخر تحديث موقع: ' + relTime(Date.parse(locDiag.at)) + (locDiag.source ? ' · ' + (locDiag.source==='native'?'أصلي':'ويب') : ''));
+        }
       }catch(e){}
     }
     return [
@@ -1607,13 +1632,14 @@
       const isToday = s.date===tk, isFuture = s.date>tk;
       const btn = document.createElement('button');
       btn.className = 'cal-cell' + (isToday?' today':'') + (isFuture?' future':'');
-      let dot = '';
+      let dot = '', live = false;
       if(!isFuture){
         if(s.state==='no_expected') dot = 'no_expected';
         else if(s.state==='unrecorded') dot = 'unrecorded';
-        else if(s.state==='recorded' && !isToday) dot = A.classify(s) || '';
+        else if(isToday){ const lc = A.liveClass(s); if(lc){ dot = lc; live = true; } } // live progress, not a verdict
+        else if(s.state==='recorded') dot = A.classify(s) || '';
       }
-      btn.innerHTML = `<span class="cal-num">${toArabicNum(dnum)}</span><span class="cal-dot ${dot}"></span>`;
+      btn.innerHTML = `<span class="cal-num">${toArabicNum(dnum)}</span><span class="cal-dot ${dot}${live?' live':''}"></span>`;
       btn.setAttribute('aria-label', calCellAria(s, dnum, isToday, isFuture));
       btn.setAttribute('role','gridcell');
       btn.addEventListener('click', ()=> openDayOverview(s.date));
@@ -1626,11 +1652,20 @@
     const items = [
       ['أيام مسجلة', m.recordedDays], ['قوية', m.highDays], ['متوسطة', m.mediumDays],
       ['منخفضة', m.lowDays], ['بدون تسجيل', m.unrecordedDays],
-      ['نسبة الشهر', m.overallRatePct==null ? '—' : toArabicNum(m.overallRatePct)+'٪'],
+      // "أداء الأيام المسجلة" (NOT "نسبة الشهر"): the % is computed ONLY over the days you actually tracked
+      // — unrecorded and future days are excluded entirely, so a single 80% day reads 80%, never diluted.
+      ['أداء الأيام المسجلة', m.overallRatePct==null ? '—' : toArabicNum(m.overallRatePct)+'٪'],
     ];
     let html = '<h3>ملخّص الشهر</h3><div class="cal-sum-grid">';
     items.forEach(([l,n])=> html += `<div class="cal-sum-item"><div class="n">${typeof n==='number'?toArabicNum(n):n}</div><div class="l">${l}</div></div>`);
     html += '</div>';
+    // Honest scope line: say exactly how many days the percentage is based on, so it can't be misread as
+    // a whole-month figure. (Excludes the in-progress today from the "finished recorded" wording.)
+    if(m.overallRatePct!=null){
+      const rd = m.recordedDays;
+      const daysTxt = rd===1 ? 'يوم واحد' : rd===2 ? 'يومين' : (rd<=10 ? toArabicNum(rd)+' أيام' : toArabicNum(rd)+' يومًا');
+      html += `<div class="cal-sum-note">النسبة محسوبة على ${daysTxt} سجّلت فيها من هذا الشهر — الأيام غير المسجّلة لا تُحتسب.</div>`;
+    }
     // best day only when there is enough data; worst day intentionally omitted (can mislead with little data)
     if(m.recordedDays>=3 && m.bestDay){ html += `<div class="cal-sum-note">أفضل يوم: ${toArabicNum(Number(m.bestDay.date.slice(-2)))} ${monthName(calMonth)} (${toArabicNum(m.bestDay.ratePct)}٪)</div>`; }
     if(m.recordedDays===0){ html += '<div class="cal-sum-note">كلما سجّلت أيامًا أكثر ستظهر لك أنماط أوضح.</div>'; }
@@ -1816,18 +1851,51 @@
     const h = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLng/2)**2;
     return 2*R*Math.asin(Math.sqrt(h));
   }
+  let locDiag = { source: null, precise: null, at: null }; // non-sensitive; never stores lat/lng
+  // Persist a coordinate into prefs.location (+timezone). Silent auto-refresh only saves on real movement.
+  function saveLocationFromCoords(lat, lng, interactive, source, precise){
+    const next = { lat: r3(lat), lng: r3(lng), tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Africa/Cairo' };
+    const cur = prefs.location;
+    locDiag = { source: source||null, precise: (precise===undefined?null:!!precise), at: new Date().toISOString() };
+    if(!interactive && cur && cur.tz===next.tz && kmBetween(cur, next) < 1) return false; // hasn't moved
+    prefs.location = next;
+    savePrefs(prefs);
+    applyPrefs();
+    return true;
+  }
+  // Native Android path: real runtime permission + one-shot fix via LocationBridge, with state-specific
+  // messages (granted / denied / denied-permanently → settings / GPS off). NEVER prompts on auto-refresh.
+  async function refreshLocationNative(interactive){
+    const L = AyyamNative.location;
+    let st; try{ st = await L.checkStatus(); }catch(e){ st = { permission:'unknown' }; }
+    if(st.permission !== 'granted'){
+      if(!interactive) return;                                   // auto-refresh must stay silent
+      let req; try{ req = await L.requestPermission(); }catch(e){ req = { permission:'unknown' }; }
+      if(req.permission === 'denied_permanently'){
+        if(confirm('التطبيق لا يملك إذن الوصول للموقع، ولن يظهر طلب الإذن مرة أخرى. هل تفتح إعدادات التطبيق للسماح بالموقع؟')){ try{ await L.openSettings(); }catch(e){} }
+        return;
+      }
+      if(req.permission !== 'granted'){ alert('لم يتم السماح بالوصول للموقع. يمكنك المحاولة مرة أخرى عند الحاجة.'); return; }
+    }
+    try{
+      const pos = await L.getCurrent();
+      const changed = saveLocationFromCoords(pos.lat, pos.lng, interactive, 'native', pos.precise);
+      if(interactive) alert(changed ? 'تم تحديث موقعك، وستُحسب مواعيد الصلاة بدقة أكبر.' : 'موقعك محدَّث بالفعل.');
+    }catch(e){
+      const reason = (e && e.message) || 'error';
+      if(!interactive) return;
+      if(reason === 'services') alert('الموقع مسموح به، لكن خدمة تحديد المواقع (GPS) مغلقة. فعّلها من إعدادات الهاتف ثم حاول مرة أخرى.');
+      else if(reason === 'permission') alert('لم يتم السماح بالوصول للموقع. يمكنك المحاولة مرة أخرى.');
+      else alert('تعذّر تحديد موقعك الآن. تأكد من تفعيل خدمة الموقع وحاول مرة أخرى بعد قليل.');
+    }
+  }
   function refreshLocation(interactive){
+    // Native Android → reliable native location (permission is declared + requested here, so the app now
+    // appears under App info → Permissions → Location). Web/PWA keeps the browser geolocation flow.
+    if(NATIVE && AyyamNative.hasNativeLocation && AyyamNative.hasNativeLocation()){ refreshLocationNative(interactive); return; }
     if(!navigator.geolocation){ if(interactive) alert('تحديد الموقع غير مدعوم في هذا المتصفح.'); return; }
     navigator.geolocation.getCurrentPosition((pos)=>{
-      const next = {
-        lat: r3(pos.coords.latitude), lng: r3(pos.coords.longitude),
-        tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Africa/Cairo',
-      };
-      const cur = prefs.location;
-      if(!interactive && cur && cur.tz===next.tz && kmBetween(cur, next) < 1) return; // hasn't moved
-      prefs.location = next;
-      savePrefs(prefs);
-      applyPrefs();
+      saveLocationFromCoords(pos.coords.latitude, pos.coords.longitude, interactive, 'web', pos.coords.accuracy!=null && pos.coords.accuracy<=100);
     }, ()=>{
       if(interactive) alert('تعذّر تحديد موقعك. تأكد من السماح للتطبيق بالوصول للموقع وأن الـ GPS مفعّل.');
     }, {timeout:15000, maximumAge: interactive ? 0 : 5*60*1000, enableHighAccuracy:false});
@@ -1898,6 +1966,81 @@
     renderTplTasks();
     closeSettings();
   });
+
+  // ---------- Android direct-APK updater (native only) ----------
+  // Shows the SAME compact "#updateBanner" pill the web SW-update flow uses. On Android the pill opens an
+  // update sheet (notes + progress); the actual download/verify/install is done by the native UpdaterBridge
+  // (SHA-256 verified, same-signature enforced by the OS, user confirms on the system installer screen).
+  let pendingUpdate = null, updateProgressWired = false;
+  function showUpdatePill(onClick){
+    const banner = $('updateBanner'); if(!banner) return;
+    banner.classList.remove('hidden');
+    const btn = $('updateNow'); if(btn){ btn.disabled=false; btn.onclick = onClick; }
+  }
+  function showUpdateProgress(pct){
+    const wrap=$('updateProgress'); if(wrap) wrap.classList.remove('hidden');
+    const fill=$('updateProgressFill'); if(fill) fill.style.width=Math.max(0,Math.min(100,pct))+'%';
+    const lbl=$('updateProgressPct'); if(lbl) lbl.textContent=toArabicNum(Math.round(pct))+'٪';
+  }
+  function hideUpdateProgress(){ const wrap=$('updateProgress'); if(wrap) wrap.classList.add('hidden'); }
+  function openUpdateSheet(){
+    const m = pendingUpdate; if(!m) return;
+    const ov=$('updateOverlay'); if(!ov) return;
+    const v=$('updateSheetVersion'); if(v) v.textContent = m.versionName ? ('الإصدار '+m.versionName) : 'إصدار جديد';
+    const n=$('updateSheetNotes'); if(n) n.textContent = m.notes || 'تحسينات وإصلاحات.';
+    hideUpdateProgress();
+    const btn=$('updateInstall'); if(btn) btn.disabled=false;
+    ov.classList.add('show');
+  }
+  function closeUpdateSheet(){ const ov=$('updateOverlay'); if(ov) ov.classList.remove('show'); }
+  async function runAndroidUpdate(){
+    const m = pendingUpdate; if(!m || !(NATIVE && AyyamNative.updaterConfigured && AyyamNative.updaterConfigured())) return;
+    const btn=$('updateInstall'); if(btn) btn.disabled=true;
+    // Update-safety: flush the outbox first; if it can't (offline), let the user choose to proceed.
+    try{ if(isPending()) await syncNow('pre-update'); }catch(e){}
+    if(isPending() && !confirm('لديك تغييرات لم تتم مزامنتها بعد. يمكنك التحديث الآن وستُرفع لاحقًا عند الاتصال، أو الانتظار. أتريد المتابعة؟')){ if(btn) btn.disabled=false; return; }
+    // Ensure the OS allows installing from this app (API 26+); otherwise send the user to enable it once.
+    let ci = { canInstall:true }; try{ ci = await AyyamNative.updater.canInstall(); }catch(e){}
+    if(!ci.canInstall){
+      alert('للتحديث المباشر، فعّل «السماح بتثبيت التطبيقات من هذا المصدر» لأيام. سيفتح النظام هذا الإعداد الآن، ثم اضغط «تحديث الآن» مرة أخرى.');
+      try{ await AyyamNative.updater.openInstallSettings(); }catch(e){}
+      if(btn) btn.disabled=false; return;
+    }
+    showUpdateProgress(0);
+    try{
+      const res = await AyyamNative.updater.download(m.apkUrl, m.sha256); // verifies SHA-256 natively
+      showUpdateProgress(100);
+      await AyyamNative.updater.install(res.path); // hands to system installer; user confirms the upgrade
+      // The system installer now owns the flow; the app data (IndexedDB/device key/outbox/widget) survives
+      // an in-place upgrade because the package + signing cert are unchanged.
+    }catch(e){
+      const reason=(e&&e.message)||'error';
+      hideUpdateProgress();
+      if(reason==='sha_mismatch') alert('تعذّر تثبيت التحديث: فشل التحقق من سلامة الملف — لم يُثبَّت شيء.');
+      else if(reason==='bad_url'||reason==='bad_sha') alert('تعذّر التحديث: بيانات التحديث غير صالحة.');
+      else alert('تعذّر تنزيل التحديث الآن. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.');
+      if(btn) btn.disabled=false;
+    }
+  }
+  async function checkNativeUpdate(){
+    if(!(NATIVE && AyyamNative.updaterConfigured && AyyamNative.updaterConfigured())) return;
+    if(!navigator.onLine) return;
+    let last=0; try{ last=parseInt(localStorage.getItem(LS_UPDATE_CHECK)||'0',10)||0; }catch(e){}
+    if(!AyyamUpdate.shouldCheck(last, Date.now())) return;
+    let txt=null;
+    try{ const res=await fetch(UPDATE_MANIFEST_URL,{cache:'no-store'}); if(!res.ok) return; txt=await res.text(); }catch(e){ return; }
+    try{ localStorage.setItem(LS_UPDATE_CHECK, String(Date.now())); }catch(e){}
+    const manifest = AyyamUpdate.parseManifest(txt); if(!manifest) return;
+    let installed=null; try{ const info=await AyyamNative.appInfo(); installed=info&&info.build; }catch(e){}
+    if(!AyyamUpdate.isUpdateAvailable(manifest, installed)) return; // up-to-date → no badge
+    pendingUpdate = manifest;
+    if(!updateProgressWired){ updateProgressWired=true; try{ AyyamNative.updater.onProgress((ev)=> showUpdateProgress((ev&&ev.percent)||0)); }catch(e){} }
+    showUpdatePill(openUpdateSheet);
+  }
+  function setupUpdateSheet(){
+    const inst=$('updateInstall'); if(inst) inst.addEventListener('click', runAndroidUpdate);
+    const cl=$('updateClose'); if(cl) cl.addEventListener('click', closeUpdateSheet);
+  }
 
   // ---------- PWA: manifest, icon, service worker, install prompt ----------
   function setupPWA(){
@@ -2150,7 +2293,7 @@
   });
 
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
-  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); }); }catch(e){} }
+  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); checkNativeUpdate(); }); }catch(e){} }
 
   const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
   if(init.state) setState(init.state);
@@ -2176,6 +2319,7 @@
     try{ AyyamNative.onDeepLink(handleDeepLink); const lu = await AyyamNative.getLaunchUrl(); if(lu) handleDeepLink(lu); }catch(e){}
     try{ AyyamNative.onBack(handleBack); }catch(e){}
     try{ setupWidgetPrivacyToggle(); }catch(e){}
+    try{ setupUpdateSheet(); setTimeout(()=>checkNativeUpdate(), 4000); }catch(e){} // check once app is settled
   }
   autoRefreshLocation();
 })();

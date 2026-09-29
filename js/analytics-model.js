@@ -222,6 +222,16 @@
     if (summary.rate >= 0.5) return 'medium';
     return 'low';
   }
+  // LIVE class for the CURRENT (in-progress) day only — a visual progress hint, NOT a historical verdict.
+  // Same thresholds as classify(), but it INTENTIONALLY works on an in-progress day (which classify()
+  // refuses). It is used purely for the calendar's live "today" dot; it is NEVER fed into any aggregate,
+  // trend, or best/worst ranking, so the A1 rule "today is never judged historically" is preserved.
+  function liveClass(summary) {
+    if (!summary || summary.state !== 'recorded' || summary.rate == null) return null; // no activity yet → no dot
+    if (summary.rate >= 0.8) return 'high';
+    if (summary.rate >= 0.5) return 'medium';
+    return 'low';
+  }
   function daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); } // month: 1..12
   function monthSummary(bundle, year, month, options) {
     options = options || {};
@@ -321,6 +331,6 @@
     periodStats, bestWorstPeriod,
     routineStats, consistentTasks, strugglingTasks,
     weekdayStats, bestWorstWeekday,
-    weekTrend, monthSummary, classify, hourlyStats, overview, report, recommendations,
+    weekTrend, monthSummary, classify, liveClass, hourlyStats, overview, report, recommendations,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

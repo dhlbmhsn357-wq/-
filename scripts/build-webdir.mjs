@@ -15,8 +15,10 @@ const FILES = ['index.html', 'manifest.webmanifest', 'sw.js',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'bg.jpg'];
 const DIRS = ['css', 'js'];
 // Native-only modules, copied from native-web/ into www/js and injected into index.html (before app.js).
-// Order matters: adhan (sets globalThis.adhan) → notif-plan/widget-model → native → app.js.
-const NATIVE_JS = ['adhan.umd.min.js', 'widget-model.js', 'notif-plan.js', 'native.js'];
+// adhan now ships with the WEB bundle too (js/adhan.umd.min.js, loaded from index.html <head>), so it is
+// NO LONGER injected here — js/ is copied wholesale, and the <script> tag already loads it before app.js
+// (and before these native modules, so notif-plan still sees globalThis.adhan at runtime).
+const NATIVE_JS = ['widget-model.js', 'notif-plan.js', 'native.js'];
 
 rmSync(WWW, { recursive: true, force: true });
 mkdirSync(join(WWW, 'js'), { recursive: true });

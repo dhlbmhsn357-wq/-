@@ -21,6 +21,9 @@
 <script src="js/time-model.js"></script>
 <script src="js/routines-model.js"></script>
 <script src="js/analytics-model.js"></script>
+<script src="js/adhan.umd.min.js"></script>
+<script src="js/overdue-model.js"></script>
+<script src="js/update-model.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
 <link rel="stylesheet" href="css/app.css">
 </head>
@@ -274,6 +277,26 @@
     <div id="dayBody"></div>
     <div class="sheet-actions">
       <button class="btn ghost" id="dayClose">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- In-app update sheet (Android direct-APK flow; web uses the SW pill directly) -->
+<div class="overlay" id="updateOverlay">
+  <div class="sheet update-sheet" role="dialog" aria-modal="true" aria-labelledby="updateSheetTitle">
+    <div class="day-sheet-head"><h2 id="updateSheetTitle">يوجد تحديث جديد لأيام</h2></div>
+    <div class="update-sheet-body">
+      <div class="update-ver" id="updateSheetVersion">إصدار جديد</div>
+      <p class="update-notes" id="updateSheetNotes">تحسينات وإصلاحات.</p>
+      <div class="update-progress hidden" id="updateProgress">
+        <div class="update-progress-head"><span>جارٍ تنزيل التحديث…</span><span id="updateProgressPct">٠٪</span></div>
+        <div class="day-progress-bar"><div class="day-progress-fill" id="updateProgressFill" style="width:0%"></div></div>
+      </div>
+      <p class="update-hint">سيطلب النظام تأكيد التثبيت، وستبقى بياناتك كما هي.</p>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn primary" id="updateInstall">تحديث الآن</button>
+      <button class="btn ghost" id="updateClose">لاحقًا</button>
     </div>
   </div>
 </div>
