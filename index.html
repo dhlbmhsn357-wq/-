@@ -149,6 +149,31 @@
   </div>
 </div>
 
+<!-- Per-occurrence action menu (edit / replace / excuse / delete / undo) -->
+<div class="overlay" id="taskActionOverlay">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="taskActionTitle">
+    <h2 id="taskActionTitle" style="font-size:16px;">المهمة</h2>
+    <div id="taskActionList" class="action-list"></div>
+    <div class="sheet-actions"><button class="btn ghost" id="taskActionClose">إغلاق</button></div>
+  </div>
+</div>
+
+<!-- «عندي عذر» sheet: optional reason + optional note -->
+<div class="overlay" id="excuseOverlay">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="excuseTitle">
+    <h2 id="excuseTitle" style="font-size:16px;">تعذّرت عليك هذه المهمة؟</h2>
+    <p id="excuseTaskTitle" style="color:var(--text-dim);font-size:13px;margin-top:0;"></p>
+    <label class="field-label">السبب (اختياري)</label>
+    <div id="excuseReasonPick" class="rec-pick"></div>
+    <label class="field-label" for="excuseNote">ملاحظة (اختياري)</label>
+    <textarea id="excuseNote" rows="2" maxlength="500" style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--line);border-radius:10px;color:var(--text);font-family:inherit;padding:8px 10px;resize:none;"></textarea>
+    <div class="sheet-actions" style="margin-top:10px;">
+      <button class="btn primary" id="excuseSave">تسجيل كمعذور</button>
+      <button class="btn ghost" id="excuseCancel">إلغاء</button>
+    </div>
+  </div>
+</div>
+
 <!-- Template settings view -->
 <div id="settingsView" class="hidden">
   <header class="top">

@@ -34,7 +34,9 @@
     const now = opts.now != null ? new Date(opts.now) : new Date();
     const privacy = !!opts.privacy;
     const maxTasks = Number.isFinite(opts.maxTasks) ? Math.max(0, opts.maxTasks) : 4;
-    const src = Array.isArray(opts.tasks) ? opts.tasks : [];
+    // Excused + replaced-original occurrences are NOT things to do now → keep them out of the widget.
+    // A replacement occurrence has status pending/completed, so it stays and shows in place of the original.
+    const src = (Array.isArray(opts.tasks) ? opts.tasks : []).filter((t) => t && t.status !== 'excused' && t.status !== 'replaced');
     const tasks = src.map(normTask).filter((t) => t.id || t.title); // drop junk entries
     const total = tasks.length;
     const done = tasks.filter((t) => t.done).length;

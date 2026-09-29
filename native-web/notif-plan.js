@@ -48,6 +48,9 @@
   function tasksFor(state, key, code) {
     if (global.AyyamRoutines && typeof global.AyyamRoutines.tasksForDate === 'function') {
       return global.AyyamRoutines.tasksForDate(state, key)
+        // Don't remind about an excused or replaced-original occurrence; a replacement occurrence (status
+        // pending/completed) stays, so the reminder is for what the user actually intends to do.
+        .filter((t) => t.status !== 'excused' && t.status !== 'replaced')
         .map((t) => ({ title: String(t.title || ''), period: PERIOD_KEYS.includes(t.period) ? t.period : null, done: t.done === true }));
     }
     const log = (isObj(state.logs) && isObj(state.logs[key])) ? state.logs[key] : {};

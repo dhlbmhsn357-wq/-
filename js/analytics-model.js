@@ -29,8 +29,13 @@
     return (isObj(l.done) && Object.keys(l.done).length > 0)
       || (Array.isArray(l.extra) && l.extra.length > 0)
       || (isObj(l.hidden) && Object.keys(l.hidden).length > 0)
-      || (isObj(l.overrides) && Object.keys(l.overrides).length > 0);
+      || (isObj(l.overrides) && Object.keys(l.overrides).length > 0)
+      || (isObj(l.excused) && Object.keys(l.excused).length > 0)
+      || (isObj(l.replacements) && Object.keys(l.replacements).length > 0);
   }
+  // An occurrence that counts toward the day's ACTIONABLE denominator (excused + replaced originals are
+  // neither completed nor missed; a replacement occurrence IS actionable).
+  const isActionable = (t) => t.status !== 'excused' && t.status !== 'replaced';
 
   // ---------- confidence (ONE central rule — no per-insight thresholds) ----------
   // Sample = number of relevant occurrences (or recorded days, for weekday stats).
@@ -63,19 +68,27 @@
     const b = isObj(bundle) ? bundle : {};
     const today = resolveToday(b, options);
     const tasks = R() ? R().tasksForDate(b, dateKey) : [];        // already excludes hidden, applies overrides + extras
-    const expected = tasks.length;
-    const completed = tasks.filter((t) => t.done).length;
+    // Actionable = pending/completed originals + replacement occurrences. Excused originals and replaced
+    // originals are counted SEPARATELY and never enter the performance denominator (see spec §5).
+    const actionableTasks = tasks.filter(isActionable);
+    const baseTasks = tasks.filter((t) => !t.isReplacement);
+    const originalExpected = baseTasks.length;
+    const excusedCount = baseTasks.filter((t) => t.status === 'excused').length;
+    const replacedCount = baseTasks.filter((t) => t.status === 'replaced').length;
+    const replacementCount = tasks.filter((t) => t.isReplacement).length;
+    const expected = actionableTasks.length;                       // the ACTIONABLE denominator
+    const completed = actionableTasks.filter((t) => t.done).length;
     const log = (isObj(b.logs) && isObj(b.logs[dateKey])) ? b.logs[dateKey] : null;
     const isInProgress = dateKey === today;
     let state;
-    if (expected === 0) state = 'no_expected';
+    if (tasks.length === 0) state = 'no_expected';
     else if (logHasActivity(log)) state = 'recorded';
     else state = 'unrecorded';
 
     const byPeriod = {};
     const buckets = PERIODS.concat(['none']);
     buckets.forEach((p) => {
-      const seg = tasks.filter((t) => (p === 'none' ? !t.period : t.period === p));
+      const seg = actionableTasks.filter((t) => (p === 'none' ? !t.period : t.period === p));
       if (!seg.length) return;
       const c = seg.filter((t) => t.done).length;
       byPeriod[p] = { expected: seg.length, completed: c, rate: rate(c, seg.length), ratePct: pct(rate(c, seg.length)) };
@@ -85,13 +98,18 @@
       date: dateKey,
       state,
       isInProgress,
-      expected,
+      expected,                                                    // = actionable (unchanged meaning when no excuse/replace)
       completed,
-      missed: state === 'recorded' ? (expected - completed) : 0, // "missed" is only meaningful on recorded days
+      missed: state === 'recorded' ? (expected - completed) : 0,   // only actionable-but-not-done counts as missed
+      originalExpected,
+      actionable: expected,
+      excusedCount,
+      replacedCount,
+      replacementCount,
       rate: rate(completed, expected),
       ratePct: pct(rate(completed, expected)),
       byPeriod,
-      tasks: tasks.map((t) => ({ id: t.id, seriesId: seriesIdOf(b, t), title: t.title, period: t.period || null, timeValue: t.timeValue || null, done: !!t.done, fromTemplate: !!t.fromTemplate })),
+      tasks: tasks.map((t) => ({ id: t.id, seriesId: seriesIdOf(b, t), title: t.title, period: t.period || null, timeValue: t.timeValue || null, done: !!t.done, fromTemplate: !!t.fromTemplate, status: t.status || (t.done ? 'completed' : 'pending'), isReplacement: !!t.isReplacement, replacesId: t.replacesId || null, replacesTitle: t.replacesTitle || null })),
     };
   }
 
@@ -131,7 +149,7 @@
     const today = resolveToday(bundle, options);
     const sums = recordedSummaries(bundle, options, today);
     const acc = {}; PERIODS.forEach((p) => (acc[p] = { completed: 0, expected: 0 }));
-    sums.forEach((s) => s.tasks.forEach((t) => { if (t.period && acc[t.period]) { acc[t.period].expected++; if (t.done) acc[t.period].completed++; } }));
+    sums.forEach((s) => s.tasks.forEach((t) => { if (t.status === 'excused' || t.status === 'replaced') return; if (t.period && acc[t.period]) { acc[t.period].expected++; if (t.done) acc[t.period].completed++; } }));
     const out = {};
     PERIODS.forEach((p) => {
       const a = acc[p];
@@ -154,7 +172,8 @@
     const sums = recordedSummaries(bundle, options, today);
     const acc = {}; // seriesId -> {expected, completed, title}
     sums.forEach((s) => s.tasks.forEach((t) => {
-      if (!t.seriesId) return;                              // one-off extras are not recurring series
+      if (t.status === 'excused' || t.status === 'replaced') return; // excused/replaced originals: not a failure, not counted
+      if (!t.seriesId) return;                              // one-off extras + today-only replacements are not series
       const a = acc[t.seriesId] || (acc[t.seriesId] = { seriesId: t.seriesId, expected: 0, completed: 0, title: t.title });
       a.expected++; if (t.done) a.completed++; a.title = t.title; // latest-seen title (occurrence order is chronological)
     }));
@@ -269,6 +288,7 @@
     const sums = recordedSummaries(bundle, options, today);
     const acc = {};
     sums.forEach((s) => s.tasks.forEach((t) => {
+      if (t.status === 'excused' || t.status === 'replaced') return;
       if (!t.timeValue || !TIME_RE.test(t.timeValue)) return;
       const h = parseInt(t.timeValue.slice(0, 2), 10);
       const a = acc[h] || (acc[h] = { hour: h, expected: 0, completed: 0 });
@@ -282,16 +302,17 @@
   function overview(bundle, options) {
     options = options || {};
     const today = resolveToday(bundle, options);
-    let recordedDays = 0, unrecordedDays = 0, noExpectedDays = 0, expected = 0, completed = 0;
+    let recordedDays = 0, unrecordedDays = 0, noExpectedDays = 0, expected = 0, completed = 0, excusedCount = 0, replacementCount = 0;
     rangeKeys(bundle, options, today).forEach((k) => {
       const s = daySummary(bundle, k, { today });
       if (s.state === 'no_expected') { noExpectedDays++; return; }
       if (s.state === 'unrecorded') { unrecordedDays++; return; }
       recordedDays++;
+      excusedCount += s.excusedCount || 0; replacementCount += s.replacementCount || 0; // transparency (not hidden)
       if (s.isInProgress) return; // exclude today's live number from the range rate
       expected += s.expected; completed += s.completed;
     });
-    return { recordedDays, unrecordedDays, noExpectedDays, expected, completed, overallRate: rate(completed, expected), overallRatePct: pct(rate(completed, expected)) };
+    return { recordedDays, unrecordedDays, noExpectedDays, expected, completed, excusedCount, replacementCount, overallRate: rate(completed, expected), overallRatePct: pct(rate(completed, expected)) };
   }
 
   // ---------- convenience: compute the insight base ONCE (each stat computed a single time) ----------

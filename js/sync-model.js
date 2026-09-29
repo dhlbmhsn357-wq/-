@@ -40,6 +40,32 @@
     }
     return r;
   }
+  // Per-day "excused" markers: { <occurrenceId>: { reason?, note? } }. An excused occurrence is neither
+  // completed nor missed (analytics excludes it from the actionable denominator). Empty by default.
+  const EXCUSE_REASONS = new Set(['emergency', 'illness', 'travel', 'commitment', 'other']);
+  function cleanExcused(o) {
+    const r = {};
+    if (isObj(o)) for (const k of Object.keys(o)) {
+      const v = o[k];
+      if (v === true) { r[k] = {}; continue; } // tolerate a bare flag
+      if (isObj(v)) r[k] = { reason: EXCUSE_REASONS.has(v.reason) ? v.reason : '', note: typeof v.note === 'string' ? v.note.slice(0, 500) : '' };
+    }
+    return r;
+  }
+  // Per-day "replacements": { <originalOccurrenceId>: { task:{title,period,time,timeValue}, reason? } }.
+  // The original becomes `replaced` (not missed); the replacement task is a real actionable occurrence
+  // for THAT day only (its completion lives under done[<originalId>#repl]). Empty by default.
+  function cleanReplacements(o) {
+    const r = {};
+    if (isObj(o)) for (const k of Object.keys(o)) {
+      const v = o[k];
+      if (!isObj(v) || !isObj(v.task) || typeof v.task.title !== 'string' || !v.task.title) continue;
+      const t = v.task;
+      r[k] = { task: { title: t.title, time: typeof t.time === 'string' ? t.time : '', timeValue: cleanTimeValue(t.timeValue), period: PERIODS.has(t.period) ? t.period : null },
+               reason: EXCUSE_REASONS.has(v.reason) ? v.reason : '' };
+    }
+    return r;
+  }
   function defaultPrefs() { return { theme: 'night', bgOn: true, bgOpacity: 72, bgBlur: 0, location: null, dayTimezone: '' }; }
 
   // Recurring-routine segment record (see js/routines-model.js). Sanitized here too so it survives the
@@ -77,7 +103,8 @@
     if (isObj(src.logs)) for (const k of Object.keys(src.logs)) {
       const l = src.logs[k];
       if (!DATE_KEY_RE.test(k) || !isObj(l)) continue;
-      logs[k] = { done: cleanFlags(l.done), extra: cleanList(l.extra), hidden: cleanFlags(l.hidden), overrides: cleanOverrides(l.overrides) };
+      logs[k] = { done: cleanFlags(l.done), extra: cleanList(l.extra), hidden: cleanFlags(l.hidden), overrides: cleanOverrides(l.overrides),
+                  excused: cleanExcused(l.excused), replacements: cleanReplacements(l.replacements) };
     }
     const p = isObj(src.prefs) ? src.prefs : {};
     const d = defaultPrefs();
@@ -108,6 +135,8 @@
       for (const id of Object.keys(l.hidden)) if (l.hidden[id] === true) out[`g:${day}:hide:${id}`] = true;
       for (const id of Object.keys(l.overrides)) out[`g:${day}:ovr:${id}`] = l.overrides[id];
       l.extra.forEach((t, i) => (out[`g:${day}:ext:${t.id}`] = { title: t.title, time: t.time, timeValue: t.timeValue || null, period: t.period, order: i }));
+      for (const id of Object.keys(l.excused || {})) out[`g:${day}:exc:${id}`] = l.excused[id];
+      for (const id of Object.keys(l.replacements || {})) out[`g:${day}:repl:${id}`] = l.replacements[id];
     }
     for (const dc of DAY_CODES) mat.template[dc].forEach((t, i) => (out[`m:${dc}:${t.id}`] = { title: t.title, time: t.time, timeValue: t.timeValue || null, period: t.period, order: i }));
     out['arch'] = mat.tplArchive;
@@ -161,7 +190,7 @@
   // ---------- materialize: enriched → bundle the app renders ----------
   function materialize(en) {
     const mat = { template: emptyTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: '0000-00-00', versions: [] }, routines: {}, migrationDate: '' };
-    const ensureDay = (d) => (mat.logs[d] || (mat.logs[d] = { done: {}, extra: [], hidden: {}, overrides: {} }));
+    const ensureDay = (d) => (mat.logs[d] || (mat.logs[d] = { done: {}, extra: [], hidden: {}, overrides: {}, excused: {}, replacements: {} }));
     const extras = {}; // day -> [{order, task}]
     const tpl = {};    // dayCode -> [{order, task}]
     for (const key of Object.keys(en.reg)) {
@@ -179,6 +208,8 @@
         else if (kind === 'hide') { if (val === true) L.hidden[id] = true; }
         else if (kind === 'ovr') { L.overrides[id] = { title: val.title, time: val.time || '', timeValue: val.timeValue || null, period: val.period || null }; }
         else if (kind === 'ext') { (extras[day] || (extras[day] = [])).push({ order: val.order || 0, task: { id, title: val.title, time: val.time || '', timeValue: val.timeValue || null, period: val.period || null } }); }
+        else if (kind === 'exc') { L.excused[id] = { reason: (val && val.reason) || '', note: (val && val.note) || '' }; }
+        else if (kind === 'repl') { if (val && isObj(val.task)) L.replacements[id] = { task: { title: val.task.title, time: val.task.time || '', timeValue: val.task.timeValue || null, period: val.task.period || null }, reason: (val && val.reason) || '' }; }
       } else if (parts[0] === 'm') {
         const [, dc, id] = parts;
         (tpl[dc] || (tpl[dc] = [])).push({ order: val.order || 0, task: { id, title: val.title, time: val.time || '', timeValue: val.timeValue || null, period: val.period || null } });
