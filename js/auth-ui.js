@@ -121,6 +121,15 @@
   }
   function setMode(m) { mode = m; message('', ''); render(); }
   function isOpen() { var v = $('authView'); return !!(v && !v.classList.contains('hidden')); }
+  // Android hardware Back: from a sub-mode return to sign-in; if dismissible, close; on the mandatory gate,
+  // consume the press (never exit the app mid-auth). Returns true when it handled the press.
+  function handleBack() {
+    if (!isOpen()) return false;
+    if (mode === 'migrating') return true;                         // don't interrupt migration
+    if (mode === 'signup' || mode === 'forgot' || mode === 'reset') { setMode('signin'); return true; }
+    if (opts.dismissible !== false && typeof handlers.onClose === 'function') { handlers.onClose(); return true; }
+    return true;                                                   // gate: consume, stay put
+  }
   function busy(b) {
     var s = $('authSubmit'); if (s) s.disabled = !!b;
     var card = $('authView'); if (card) { var c = card.querySelector('.auth-card'); if (c) c.classList.toggle('is-busy', !!b); }
@@ -141,5 +150,5 @@
     if (o.message != null) message(o.message, o.messageKind || 'error');
   }
 
-  global.AyyamAuthUI = { init: init, open: open, close: close, setMode: setMode, isOpen: isOpen, busy: busy, message: message, migrating: migrating, currentMode: function () { return mode; } };
+  global.AyyamAuthUI = { init: init, open: open, close: close, setMode: setMode, isOpen: isOpen, handleBack: handleBack, busy: busy, message: message, migrating: migrating, currentMode: function () { return mode; } };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

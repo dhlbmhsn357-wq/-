@@ -137,6 +137,12 @@
 
   function isOpen() { var v = view(); return !!(v && !v.classList.contains('hidden')); }
   function close() { window.removeEventListener('resize', onResize); mode = null; hideView(); }
+  // Android hardware Back: in the tour, step back if possible, else exit (counts as skip); on the starter, skip.
+  function back() {
+    if (mode === 'tour') { if (idx > 0) { idx--; renderStep(); } else { finish('skipped'); } return true; }
+    if (mode === 'starter') { close(); return true; }
+    return false;
+  }
 
-  global.AyyamOnboarding = { startTour: startTour, startStarter: startStarter, isOpen: isOpen, close: close };
+  global.AyyamOnboarding = { startTour: startTour, startStarter: startStarter, isOpen: isOpen, close: close, back: back };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

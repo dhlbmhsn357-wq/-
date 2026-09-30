@@ -490,19 +490,26 @@
   }
   async function doSignUp(email, password, name){
     if(!(AC() && sb)) return { error:{ message:'unavailable' } };
-    return AC().signUp(sb, email, password, name);
+    return AC().signUp(sb, email, password, name, NATIVE ? NATIVE_VERIFY_REDIRECT : undefined);
   }
   async function doSignOut(){
     if(!(AC() && sb)) return;
     if(isPending() && navigator.onLine!==false){ try{ await syncNow('sync'); }catch(e){} }
     if(isPending() && !confirm('لديك تغييرات لم تتم مزامنتها بعد. تسجيل الخروج لن يحذفها، وستُرفع عند دخولك مرة أخرى. متابعة؟')) return;
-    try{ if(NATIVE) await AyyamNative.updateWidgetSnapshot(null); }catch(e){} // clear the widget snapshot on sign-out
+    // Account isolation on sign-out: clear the widget snapshot AND cancel this account's scheduled reminders,
+    // so the next account never inherits account A's widget or notifications.
+    try{ if(NATIVE) await AyyamNative.updateWidgetSnapshot(null); }catch(e){}
+    try{ if(NATIVE) await AyyamNative.clearNotif(); }catch(e){}
     await AC().signOut(sb);
     // onAuthChanged(null) will flush + reload into the legacy DB.
   }
+  // Native deep-link redirects (Android/Capacitor). The email link returns to the app; AndroidManifest already
+  // catches every ayyam:// URL. On web we return to the app's own URL (supabase-js detectSessionInUrl handles it).
+  const NATIVE_RESET_REDIRECT = 'ayyam://reset';
+  const NATIVE_VERIFY_REDIRECT = 'ayyam://auth';
   async function doForgot(email){
     if(!(AC() && sb)) return { error:{ message:'unavailable' } };
-    const redirect = (location.origin || '') + (location.pathname || '/');
+    const redirect = NATIVE ? NATIVE_RESET_REDIRECT : ((location.origin || '') + (location.pathname || '/'));
     return AC().resetPassword(sb, email, redirect);
   }
   async function doReset(newPassword){
@@ -1072,10 +1079,28 @@
       el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'), 2000);
     }catch(e){}
   }
+  // A recovery / email-verification deep link (Android). Establishes the session from the link, then opens the
+  // reset screen (recovery) or reloads into the account (verification). Never shows a black/broken web page.
+  async function handleAuthDeepLink(rawUrl, host){
+    if(!(sb && AC())) return;
+    try{ hideStartupState(); if(loadingEl) loadingEl.classList.add('hidden'); }catch(e){}
+    let res = null; try{ res = await AC().setSessionFromUrl(sb, rawUrl); }catch(e){}
+    if(!res || !res.ok){
+      try{ openAuth('signin', { dismissible:false }); if(globalThis.AyyamAuthUI) globalThis.AyyamAuthUI.message('انتهت صلاحية الرابط أو أنه غير صالح. اطلب رابطًا جديدًا.', 'error'); }catch(e){}
+      return;
+    }
+    if(host === 'reset' || (res.type && String(res.type).indexOf('recovery')===0)){
+      try{ openAuth('reset', { dismissible:false }); }catch(e){}
+    } else {
+      // email verified / signed in → boot into the account (onAuthChanged also fires; reload is idempotent)
+      try{ location.reload(); }catch(e){}
+    }
+  }
   function handleDeepLink(url){
     try{
       if(typeof url!=='string' || url.indexOf('ayyam://')!==0) return; // validate scheme
       const u = new URL(url);
+      if(u.hostname === 'reset' || u.hostname === 'auth'){ handleAuthDeepLink(url, u.hostname); return; } // password reset / email verify
       if(u.hostname !== 'today') return;                                // only the Today host
       selectedDate = parseKey(todayKey());
       if($('settingsView') && !$('settingsView').classList.contains('hidden')) closeSettings();
@@ -1090,6 +1115,10 @@
   // Android hardware/system Back: close the top-most thing; exit only when nothing is left to close.
   function handleBack(){
     try{
+      // Top-most full-screen flows first (onboarding z-250 > auth z-240 > admin z-230) — never exit mid-flow.
+      if(globalThis.AyyamOnboarding && globalThis.AyyamOnboarding.isOpen()){ globalThis.AyyamOnboarding.back(); return; } // onboarding: prev/exit
+      if(globalThis.AyyamAuthUI && globalThis.AyyamAuthUI.isOpen()){ globalThis.AyyamAuthUI.handleBack(); return; }        // auth: sub-screen→back / gate consumes
+      if(globalThis.AyyamAdmin && globalThis.AyyamAdmin.isOpen()){ globalThis.AyyamAdmin.close(); return; }               // admin dashboard
       const upd = $('updateOverlay');
       if(upd && upd.classList.contains('show')){ closeUpdateSheet(); return; }      // 0. update sheet
       const exc = $('excuseOverlay');

@@ -40,6 +40,15 @@
         } catch (e) { return { data: { session: null }, error: { message: String(e.message || e) } }; }
       },
       signOut: async function () { saveSession(null); emit(null); return { error: null }; },
+      // Deep-link session establishment (native recovery/verification). The access_token IS the uid in this mock.
+      setSession: async function (o) {
+        var uid = o && o.access_token; if (!uid) return { data: { session: null }, error: { message: 'invalid' } };
+        var s = { access_token: uid, user: { id: uid } }; saveSession(s); emit(s); return { data: { session: s }, error: null };
+      },
+      exchangeCodeForSession: async function (code) {
+        if (!code) return { data: { session: null }, error: { message: 'invalid' } };
+        var s = { access_token: code, user: { id: code } }; saveSession(s); emit(s); return { data: { session: s }, error: null };
+      },
       resetPasswordForEmail: async function (email) {
         try { await post('/__auth/reset', { email: email }); return { data: {}, error: null }; }
         catch (e) { return { data: {}, error: { message: String(e.message || e) } }; }

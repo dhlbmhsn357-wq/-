@@ -92,8 +92,25 @@
     try { const r = await sb.auth.getSession(); return (r && r.data && r.data.session) || null; } catch (e) { return null; }
   }
   function userIdOf(session) { return (session && session.user && session.user.id) || null; }
-  async function signUp(sb, email, password, displayName) {
-    return sb.auth.signUp({ email, password, options: { data: displayName ? { display_name: displayName } : {} } });
+  async function signUp(sb, email, password, displayName, emailRedirectTo) {
+    const options = { data: displayName ? { display_name: displayName } : {} };
+    if (emailRedirectTo) options.emailRedirectTo = emailRedirectTo;   // native: email-confirm link returns to the app
+    return sb.auth.signUp({ email, password, options });
+  }
+  // Establish a session from a recovery / email-verification DEEP LINK (Android/Capacitor: the link opens the
+  // app via appUrlOpen instead of reloading the page, so supabase-js can't auto-detect it). Supports both the
+  // implicit flow (tokens in the URL fragment) and PKCE (?code=...). Returns { ok, type } — never throws.
+  async function setSessionFromUrl(sb, rawUrl) {
+    try {
+      const hash = (String(rawUrl).split('#')[1] || '');
+      const hp = new URLSearchParams(hash);
+      const at = hp.get('access_token'), rt = hp.get('refresh_token');
+      if (at && rt) { const r = await sb.auth.setSession({ access_token: at, refresh_token: rt }); return { ok: !(r && r.error), type: hp.get('type') || 'recovery' }; }
+      let code = null, qtype = null;
+      try { const q = new URL(rawUrl).searchParams; code = q.get('code'); qtype = q.get('type'); } catch (e) {}
+      if (code && sb.auth.exchangeCodeForSession) { const r = await sb.auth.exchangeCodeForSession(code); return { ok: !(r && r.error), type: qtype || 'recovery' }; }
+      return { ok: false };
+    } catch (e) { return { ok: false, error: e }; }
   }
   async function signIn(sb, email, password) { return sb.auth.signInWithPassword({ email, password }); }
   async function signOut(sb) { try { return await sb.auth.signOut(); } catch (e) { return { error: e }; } }
@@ -117,6 +134,6 @@
   global.AyyamAccount = {
     LEGACY_DB, dbNameFor,
     v2Backend, legacyBackend, migrate,
-    getSession, userIdOf, signUp, signIn, signOut, resetPassword, updatePassword, onAuthChange,
+    getSession, userIdOf, signUp, signIn, signOut, resetPassword, updatePassword, setSessionFromUrl, onAuthChange,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
