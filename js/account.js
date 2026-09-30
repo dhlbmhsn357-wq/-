@@ -97,11 +97,26 @@
   }
   async function signIn(sb, email, password) { return sb.auth.signInWithPassword({ email, password }); }
   async function signOut(sb) { try { return await sb.auth.signOut(); } catch (e) { return { error: e }; } }
-  function onAuthChange(sb, cb) { try { return sb.auth.onAuthStateChange((_e, session) => cb(session)); } catch (e) { return null; } }
+  // Send a password-reset email. The link returns to `redirectTo`; supabase-js (detectSessionInUrl) then
+  // establishes a short recovery session and fires a PASSWORD_RECOVERY event → the app opens the reset screen.
+  async function resetPassword(sb, email, redirectTo) {
+    try { return await sb.auth.resetPasswordForEmail(email, redirectTo ? { redirectTo } : undefined); }
+    catch (e) { return { error: e }; }
+  }
+  // Set a new password for the currently-authenticated (recovery) session.
+  async function updatePassword(sb, password) {
+    try { return await sb.auth.updateUser({ password }); }
+    catch (e) { return { error: e }; }
+  }
+  // Raised as its own event ('PASSWORD_RECOVERY') AND on the initial load when the URL carried a recovery
+  // token; cb(session) receives the recovery session so the app can prompt for a new password.
+  function onAuthChange(sb, cb) {
+    try { return sb.auth.onAuthStateChange((event, session) => cb(session, event)); } catch (e) { return null; }
+  }
 
   global.AyyamAccount = {
     LEGACY_DB, dbNameFor,
     v2Backend, legacyBackend, migrate,
-    getSession, userIdOf, signUp, signIn, signOut, onAuthChange,
+    getSession, userIdOf, signUp, signIn, signOut, resetPassword, updatePassword, onAuthChange,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

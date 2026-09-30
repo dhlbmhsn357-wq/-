@@ -204,6 +204,16 @@ const server = http.createServer(async (req, res) => {
     if (!u || u.password !== password) return send(res, 200, { error: { message: 'invalid login credentials' } });
     return send(res, 200, { session: { access_token: u.id, user: { id: u.id, email } } });
   }
+  // Password reset: request-email is always a 200 (no account enumeration); update sets a new password for
+  // the recovery-session user (token = uid).
+  if (p === '/__auth/reset' && req.method === 'POST') { return send(res, 200, { ok: true }); }
+  if (p === '/__auth/update' && req.method === 'POST') {
+    const { token, password } = JSON.parse(await readBody(req) || '{}');
+    if (!token || !password || password.length < 6) return send(res, 200, { error: { message: 'password should be at least 6 characters' } });
+    let hit = null; for (const [email, u] of authUsers) { if (u.id === token) { u.password = password; hit = { id: u.id, email }; break; } }
+    if (!hit) return send(res, 200, { error: { message: 'no recovery session' } });
+    return send(res, 200, { user: hit });
+  }
 
   // ---- the browser-side Supabase mock ----
   if (p === '/mock-supabase.js') return send(res, 200, readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'mock-supabase.js')), MIME['.js']);

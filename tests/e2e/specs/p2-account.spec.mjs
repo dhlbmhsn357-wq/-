@@ -7,10 +7,13 @@ test.describe.configure({ retries: 2, timeout: 90000 });
 
 async function signUp(page, email, password) {
   await page.locator('#openSettings').click();
-  await expect(page.locator('#accountBox')).toBeVisible();
-  await page.locator('#acctEmail').fill(email);
-  await page.locator('#acctPass').fill(password);
-  await page.locator('#acctSignUp').click();
+  await page.locator('#acctOpenAuth').click();                 // opens the premium auth screen (signin mode)
+  await expect(page.locator('#authView')).toBeVisible();
+  await page.locator('#authSwitch').click();                   // signin → signup
+  await expect(page.locator('#authName')).toBeVisible();
+  await page.locator('#authEmail').fill(email);
+  await page.locator('#authPass').fill(password);
+  await page.locator('#authSubmit').click();
 }
 
 test('signup migrates the legacy device data into the new account (nothing lost), then account mode syncs', async ({ page }) => {
@@ -43,9 +46,9 @@ test('sign out returns to the legacy device (data retained, not deleted)', async
   await page.locator('#acctSignOut').click();
   // sign-out reloads into the legacy device: the schedule is still there (not deleted)
   await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 });
-  // re-open settings → the sign-in form is back (legacy mode)
+  // re-open settings → the account entry (sign-in/up) is back (legacy mode)
   await page.locator('#openSettings').click();
-  await expect(page.locator('#acctEmail')).toBeVisible();
+  await expect(page.locator('#acctOpenAuth')).toBeVisible();
 });
 
 test('two accounts on the same device are isolated: B never sees A private data', async ({ page }) => {

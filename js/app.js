@@ -461,7 +461,9 @@
   // right per-user DB and pulls that account's data). Sign-in from legacy runs the one-time migration first;
   // sign-out/switch flushes the outbox first. The initial replay event is ignored (boot already handled it).
   let authReady = false, authBusy = false;
-  async function onAuthChanged(session){
+  async function onAuthChanged(session, event){
+    // A password-reset link established a short recovery session → prompt for a new password (no reload).
+    if(event === 'PASSWORD_RECOVERY'){ try{ openAuth('reset', { dismissible:false }); }catch(e){} return; }
     if(!authReady || authBusy) return;
     const newUid = AC() ? AC().userIdOf(session) : null;
     if(newUid === accountUid) return;   // token refresh / no context change
@@ -469,6 +471,11 @@
     try{
       if(newUid && !accountMode){
         accountMode = true; accountUid = newUid;         // target the account for migration + v2 sync
+        // Show a clear, honest progress screen while we link this device's data into the account. Data is
+        // never lost (a recovery snapshot is written first); the reload afterwards lands in the account DB.
+        const AU = globalThis.AyyamAuthUI;
+        const hasLegacyData = (function(){ try{ return !enrichedIsEmpty(); }catch(e){ return false; } })() || !!getDeviceKey();
+        try{ if(AU) AU.migrating({ title: hasLegacyData ? 'جارٍ ربط بياناتك بحسابك…' : 'جارٍ تجهيز حسابك…', sub:'لا تُغلق التطبيق — نحفظ كل بياناتك بأمان.' }); }catch(e){}
         try{ await runAccountMigration(); }catch(e){}    // idempotent; reload pulls the account data either way
       } else {
         try{ if(navigator.onLine!==false && isPending()) await syncNow('sync'); }catch(e){} // flush before switching
@@ -493,14 +500,86 @@
     await AC().signOut(sb);
     // onAuthChanged(null) will flush + reload into the legacy DB.
   }
-  function authErr(e){
+  async function doForgot(email){
+    if(!(AC() && sb)) return { error:{ message:'unavailable' } };
+    const redirect = (location.origin || '') + (location.pathname || '/');
+    return AC().resetPassword(sb, email, redirect);
+  }
+  async function doReset(newPassword){
+    if(!(AC() && sb)) return { error:{ message:'unavailable' } };
+    return AC().updatePassword(sb, newPassword);
+  }
+  // Never surface a raw Supabase error. Maps every known failure — plus offline / rate-limit / server-down —
+  // to a calm Arabic sentence. `ctx` is the action ('signin'|'signup'|'forgot'|'reset') for wording nuance.
+  function authMessage(e, ctx){
+    if(navigator.onLine === false) return 'لا يوجد اتصال بالإنترنت. تحقّق من الشبكة وحاول مجددًا.';
+    const status = (e && (e.status || e.statusCode)) || 0;
     const m = String((e && e.message)||'').toLowerCase();
-    if(m.includes('invalid') || m.includes('credential')) return 'بيانات الدخول غير صحيحة.';
-    if(m.includes('registered') || m.includes('exists') || m.includes('already')) return 'هذا البريد مسجّل بالفعل. جرّب الدخول.';
+    if(status === 429 || m.includes('rate') || m.includes('too many')) return 'محاولات كثيرة خلال وقت قصير. انتظر قليلًا ثم أعد المحاولة.';
+    if(status >= 500 || m.includes('unavailable') || m.includes('gateway') || m.includes('timeout') || m.includes('network') || m.includes('failed to fetch')) return 'الخدمة غير متاحة مؤقتًا. حاول بعد قليل.';
+    if(m.includes('not confirmed') || m.includes('not verified') || m.includes('confirm')) return 'لم يتم تأكيد بريدك بعد. افتح رسالة التأكيد في بريدك أولًا.';
+    if(m.includes('invalid login') || m.includes('invalid credential') || (m.includes('invalid') && ctx==='signin')) return 'البريد أو كلمة المرور غير صحيحة.';
+    if(m.includes('registered') || m.includes('exists') || m.includes('already')) return 'هذا البريد مسجّل بالفعل. جرّب تسجيل الدخول.';
+    if(m.includes('password') && m.includes('should')) return 'كلمة المرور قصيرة (٦ أحرف على الأقل).';
     if(m.includes('password')) return 'كلمة المرور غير مقبولة (٦ أحرف على الأقل).';
-    if(m.includes('email')) return 'البريد الإلكتروني غير صالح.';
+    if(m.includes('email') && (m.includes('invalid') || m.includes('valid'))) return 'البريد الإلكتروني غير صالح.';
     return 'تعذّر إتمام العملية. حاول مرة أخرى.';
   }
+  const authErr = (e)=> authMessage(e, 'signin'); // back-compat
+
+  // Open the premium full-screen auth experience. `o.showEscapes` (first-run gate only) offers "continue
+  // without an account" + a tucked-away legacy sync-key path; a genuinely new user never sees the key concept.
+  function openAuth(mode, o){
+    o = o || {};
+    const AU = globalThis.AyyamAuthUI; if(!AU){ return; }
+    AU.init({
+      onSubmit: async (m, v)=>{
+        AU.message('', '');
+        if(m==='signup'){
+          if(!v.email){ AU.message('أدخل بريدك الإلكتروني.', 'error'); return; }
+          if((v.password||'').length < 6){ AU.message('كلمة المرور ٦ أحرف على الأقل.', 'error'); return; }
+          AU.busy(true); AU.message('جارٍ إنشاء حسابك…', 'info');
+          const r = await doSignUp(v.email, v.password, v.name);
+          if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'signup'), 'error'); return; }
+          const hasSession = r && r.data && r.data.session;
+          if(!hasSession){ // project requires email confirmation → no session yet
+            AU.busy(false); AU.setMode('signin');
+            AU.message('أنشأنا حسابك. افتح رسالة التأكيد في بريدك ثم سجّل الدخول.', 'success');
+            return;
+          }
+          // session established → onAuthChanged handles migration + reload
+          AU.message('تم — جارٍ تجهيز حسابك…', 'success');
+          if(o.reloadOnSuccess) setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 700);
+        } else if(m==='signin'){
+          if(!v.email || !v.password){ AU.message('أدخل البريد وكلمة المرور.', 'error'); return; }
+          AU.busy(true); AU.message('جارٍ تسجيل الدخول…', 'info');
+          const r = await doSignIn(v.email, v.password);
+          if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'signin'), 'error'); return; }
+          AU.message('تم — جارٍ فتح حسابك…', 'success');
+          if(o.reloadOnSuccess) setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 700);
+        } else if(m==='forgot'){
+          if(!v.email){ AU.message('أدخل بريدك الإلكتروني.', 'error'); return; }
+          AU.busy(true); AU.message('جارٍ الإرسال…', 'info');
+          const r = await doForgot(v.email);
+          AU.busy(false);
+          if(r && r.error){ AU.message(authMessage(r.error,'forgot'), 'error'); return; }
+          AU.message('إن كان لديك حساب بهذا البريد، فستصلك رسالة بها رابط لإعادة التعيين.', 'success');
+        } else if(m==='reset'){
+          if((v.password||'').length < 6){ AU.message('كلمة المرور ٦ أحرف على الأقل.', 'error'); return; }
+          AU.busy(true); AU.message('جارٍ الحفظ…', 'info');
+          const r = await doReset(v.password);
+          if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'reset'), 'error'); return; }
+          AU.message('تم تحديث كلمة المرور. جارٍ الدخول…', 'success');
+          setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 900);
+        }
+      },
+      onClose: ()=>{ AU.close(); if(typeof o.onClose==='function') o.onClose(); },
+      onOffline: async ()=>{ AU.close(); if(typeof o.onOffline==='function') await o.onOffline(); },
+      onHaveKey: ()=>{ AU.close(); if(typeof o.onHaveKey==='function') o.onHaveKey(); },
+    });
+    AU.open(mode||'signin', { dismissible: o.dismissible !== false, showEscapes: !!o.showEscapes });
+  }
+
   async function setupAccountUI(){
     const box = $('accountBox'); if(!box || !AC() || !sb) return;
     let sess=null; try{ sess = await AC().getSession(sb); }catch(e){}
@@ -513,17 +592,8 @@
       const so=$('acctSignOut'); if(so) so.addEventListener('click', doSignOut);
     } else {
       box.innerHTML = `<p class="acct-hint">أنشئ حسابًا لمزامنة بياناتك بأمان بين أجهزتك — بدون أي مفتاح.</p>
-        <input id="acctEmail" class="acct-input" type="email" inputmode="email" autocomplete="email" placeholder="البريد الإلكتروني" />
-        <input id="acctPass" class="acct-input" type="password" autocomplete="current-password" placeholder="كلمة المرور" />
-        <input id="acctName" class="acct-input" type="text" placeholder="الاسم (اختياري)" />
-        <div class="acct-actions"><button class="btn primary" id="acctSignIn">دخول</button>
-          <button class="btn" id="acctSignUp">إنشاء حساب</button></div>
-        <div id="acctMsg" class="acct-msg"></div>`;
-      const setMsg=(t)=>{ const m=$('acctMsg'); if(m) m.textContent=t; };
-      const busy=(b)=>{ ['acctSignIn','acctSignUp'].forEach(id=>{ const el=$(id); if(el) el.disabled=b; }); };
-      const em=()=> ($('acctEmail').value||'').trim(), pw=()=> $('acctPass').value||'', nm=()=> ($('acctName').value||'').trim();
-      $('acctSignIn').addEventListener('click', async ()=>{ busy(true); setMsg('جارٍ الدخول…'); const r=await doSignIn(em(),pw()); if(r && r.error){ setMsg(authErr(r.error)); busy(false); } });
-      $('acctSignUp').addEventListener('click', async ()=>{ if(pw().length<6){ setMsg('كلمة المرور ٦ أحرف على الأقل.'); return; } busy(true); setMsg('جارٍ إنشاء الحساب…'); const r=await doSignUp(em(),pw(),nm()); if(r && r.error){ setMsg(authErr(r.error)); busy(false); } });
+        <button class="btn primary acct-open" id="acctOpenAuth">تسجيل الدخول أو إنشاء حساب</button>`;
+      const ob=$('acctOpenAuth'); if(ob) ob.addEventListener('click', ()=> openAuth('signin', { dismissible:true }));
     }
   }
 
@@ -2540,11 +2610,38 @@
       off.classList.remove('hidden');
     }
   }
+  // Continue as a local-only device (baseline-stamped, so a later reconnect merges rather than overwrites).
+  async function continueOffline(){
+    hideStartupState();
+    try{ if(globalThis.AyyamAuthUI) globalThis.AyyamAuthUI.close(); }catch(e){}
+    await seedDefault(true);
+    await activateRoutinesIfNeeded();
+    if(loadingEl) loadingEl.classList.add('hidden');
+    render();
+  }
   async function runFirstLoad(){
     const r = await firstLoadPull();
-    if(r==='ready'){ hideStartupState(); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
+    if(r==='ready'){
+      hideStartupState();
+      // A brand-new account row exists but is empty (just created by migration/adopt) → give the user the
+      // starter schedule instead of a blank screen. Baseline-stamped, so any real data still wins on merge.
+      if(accountMode && enrichedIsEmpty()){ await seedDefault(false); }
+      await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render();
+    }
     else if(r==='empty'){ hideStartupState(); await seedDefault(false); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
-    else if(r==='need-key'){ needsKey=true; syncState='need-key'; updateSyncBadge(); showStartupState('need-key'); }
+    else if(r==='need-auth'){
+      // An account session that can't be confirmed (expired/offline) → ask to sign in; stay usable offline.
+      if(loadingEl) loadingEl.classList.add('hidden');
+      openAuth('signin', { dismissible:false, reloadOnSuccess:true, onOffline: continueOffline });
+    }
+    else if(r==='need-key'){
+      // A signed-out device with no local data. New users must NEVER see the sync-key concept: present the
+      // premium account gate. Escapes: continue offline, or (tucked away) restore an existing legacy key.
+      if(loadingEl) loadingEl.classList.add('hidden');
+      openAuth('signup', { dismissible:false, showEscapes:true,
+        onOffline: continueOffline,
+        onHaveKey: ()=>{ needsKey=true; syncState='need-key'; updateSyncBadge(); showStartupState('need-key'); } });
+    }
     else { showStartupState('load-failed'); } // unreachable
   }
   $('startupRetry').addEventListener('click', ()=>{ if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad(); });
@@ -2554,13 +2651,7 @@
     if(!submitDeviceKey(k)) return;
     if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad();
   });
-  $('startupOffline').addEventListener('click', async ()=>{
-    hideStartupState();
-    await seedDefault(true); // local-only: baseline-stamped, so a later reconnect merges (not overwrites)
-    await activateRoutinesIfNeeded();
-    if(loadingEl) loadingEl.classList.add('hidden');
-    render();
-  });
+  $('startupOffline').addEventListener('click', continueOffline);
 
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
   if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); checkNativeUpdate(); }); }catch(e){} }
@@ -2572,7 +2663,7 @@
     accountUid = AC() ? AC().userIdOf(sess) : null;
     accountMode = !!accountUid;
   }catch(e){ accountMode=false; accountUid=null; }
-  try{ if(sb && AC()) AC().onAuthChange(sb, (s)=> onAuthChanged(s)); }catch(e){}
+  try{ if(sb && AC()) AC().onAuthChange(sb, (s, ev)=> onAuthChanged(s, ev)); }catch(e){}
 
   const init = await initStorage();          // open IndexedDB (per-user in account mode), migrate once, load
   if(init.state) setState(init.state);

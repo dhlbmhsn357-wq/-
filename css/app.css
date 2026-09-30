@@ -452,6 +452,56 @@
 .task.flash{ animation: ayyam-flash 2s ease; }
 @keyframes ayyam-flash{ 0%,100%{ background:transparent; } 20%{ background:rgba(232,184,75,0.22); } }
 
+  /* Full-screen auth experience (P3) */
+  .auth-view{position:fixed;inset:0;z-index:240;background:var(--bg);}
+  body.auth-open{overflow:hidden;}
+  .auth-scroll{position:absolute;inset:0;overflow-y:auto;display:flex;align-items:center;justify-content:center;
+    padding:24px 16px calc(24px + env(safe-area-inset-bottom));}
+  /* soft prayer-toned aura behind the card */
+  .auth-view::before{content:'';position:absolute;inset:0;pointer-events:none;
+    background:
+      radial-gradient(60% 40% at 78% 8%, rgba(232,184,75,0.16), transparent 70%),
+      radial-gradient(55% 45% at 12% 100%, rgba(124,147,196,0.16), transparent 70%);}
+  .auth-card{position:relative;z-index:1;width:100%;max-width:400px;background:var(--surface2);
+    border:1px solid var(--line);border-radius:22px;padding:30px 24px 26px;
+    box-shadow:0 24px 60px rgba(0,0,0,0.42);display:flex;flex-direction:column;gap:0;
+    animation:auth-rise .32s cubic-bezier(.2,.7,.3,1);}
+  @keyframes auth-rise{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:none;}}
+  .auth-card.is-busy{opacity:.92;}
+  .auth-close{position:absolute;top:14px;inset-inline-start:14px;width:32px;height:32px;border-radius:10px;
+    background:var(--surface);border:1px solid var(--line);color:var(--text-dim);font-size:14px;cursor:pointer;line-height:1;}
+  .auth-close:hover{color:var(--text);}
+  .auth-brand{font-family:'Aref Ruqaa',serif;font-size:40px;line-height:1;text-align:center;color:var(--text);
+    letter-spacing:1px;margin-bottom:18px;}
+  .auth-body{display:flex;flex-direction:column;}
+  .auth-title{font-family:'Cairo',sans-serif;font-weight:800;font-size:22px;text-align:center;margin:0 0 8px;color:var(--text);}
+  .auth-sub{color:var(--text-dim);font-size:13px;line-height:1.7;text-align:center;margin:0 0 18px;}
+  .auth-input{width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--line);
+    border-radius:12px;color:var(--text);font-family:inherit;font-size:15px;padding:13px 14px;margin-bottom:10px;
+    transition:border-color .15s;}
+  .auth-input:focus{outline:none;border-color:var(--dhuhr);}
+  .auth-submit{width:100%;flex:none;margin-top:6px;padding:13px 12px;font-size:15px;}
+  .auth-submit:disabled{opacity:.6;cursor:default;}
+  .auth-msg{min-height:18px;font-size:12.5px;line-height:1.6;text-align:center;margin-top:12px;color:var(--text-dim);}
+  .auth-msg-error{color:var(--bad);}
+  .auth-msg-success{color:var(--good);}
+  .auth-msg-info{color:var(--text-dim);}
+  .auth-switch{text-align:center;font-size:13px;color:var(--text-dim);margin:14px 0 0;}
+  .auth-link{background:none;border:none;color:var(--dhuhr);font-family:inherit;font-size:13px;font-weight:600;
+    cursor:pointer;padding:2px 4px;}
+  .auth-link:hover{text-decoration:underline;}
+  .auth-escapes{display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:20px;
+    padding-top:16px;border-top:1px solid var(--line);}
+  .auth-escape{background:none;border:none;color:var(--text-dim);font-family:inherit;font-size:12.5px;cursor:pointer;padding:4px;}
+  .auth-escape:hover{color:var(--text);}
+  .auth-escape-dim{opacity:.6;font-size:11.5px;}
+  .auth-migrate{display:flex;flex-direction:column;align-items:center;gap:14px;padding:14px 0;}
+  .auth-migrate .auth-title{font-size:19px;margin-top:4px;}
+  .auth-retry{max-width:200px;}
+
+  /* Settings → account summary */
+  .acct-open{width:100%;}
+
   /* Account section (P2) */
   .account-box{display:flex;flex-direction:column;gap:8px;}
   .acct-hint{color:var(--text-dim);font-size:12.5px;margin:0 0 4px;line-height:1.6;}

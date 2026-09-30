@@ -21,8 +21,9 @@
       maybeSingle: denied, then: function (res, rej) { return denied().then(res, rej); } };
     return api;
   }
+  var authListeners = [];   // shared so a test can fire PASSWORD_RECOVERY into the app's own client listener
   function makeAuth() {
-    var listeners = [];
+    var listeners = authListeners;
     function emit(session) { listeners.forEach(function (cb) { try { cb('SIGNED_' + (session ? 'IN' : 'OUT'), session); } catch (e) {} }); }
     return {
       getSession: async function () { return { data: { session: loadSession() }, error: null }; },
@@ -39,6 +40,16 @@
         } catch (e) { return { data: { session: null }, error: { message: String(e.message || e) } }; }
       },
       signOut: async function () { saveSession(null); emit(null); return { error: null }; },
+      resetPasswordForEmail: async function (email) {
+        try { await post('/__auth/reset', { email: email }); return { data: {}, error: null }; }
+        catch (e) { return { data: {}, error: { message: String(e.message || e) } }; }
+      },
+      updateUser: async function (attrs) {
+        try { var s = loadSession(); var r = await post('/__auth/update', { token: s && s.access_token, password: attrs && attrs.password });
+          if (r.error) return { data: { user: null }, error: r.error };
+          return { data: { user: r.user }, error: null };
+        } catch (e) { return { data: { user: null }, error: { message: String(e.message || e) } }; }
+      },
       onAuthStateChange: function (cb) { listeners.push(cb); return { data: { subscription: { unsubscribe: function () {} } } }; },
     };
   }
@@ -53,6 +64,11 @@
         },
         from: makeQuery,
       };
+    },
+    // Test hook: simulate arriving via a password-recovery link (fires PASSWORD_RECOVERY into the app's client).
+    __fireRecovery: function (session) {
+      try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e) {}
+      authListeners.forEach(function (cb) { try { cb('PASSWORD_RECOVERY', session); } catch (e) {} });
     },
   };
 })();

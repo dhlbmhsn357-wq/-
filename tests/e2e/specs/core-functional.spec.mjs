@@ -14,13 +14,19 @@ test('first load WITH a device key seeds the schedule and syncs', async ({ page,
   expect(db.main.revision).toBeGreaterThan(0);
 });
 
-test('first load WITHOUT a device key shows the key screen, no defaults behind it', async ({ page }) => {
+test('first load WITHOUT a device key shows the account screen (not the key), no defaults behind it', async ({ page }) => {
   await prepare(page, { key: false });
   await page.goto('/');
+  // New public-launch behaviour: a genuinely new device is taken to the premium account gate, never the
+  // device-key concept. The legacy key restore is only a tucked-away escape.
+  await expect(page.locator('#authView')).toBeVisible();
+  await expect(page.locator('#authSubmit')).toBeVisible();
+  await expect(page.locator('#startupState')).toBeHidden();
+  expect(await page.locator('.task').count()).toBe(0); // no default schedule presented as data behind the gate
+  // the tucked-away legacy path still lets an existing key user reach the key screen
+  await page.locator('#authHaveKey').click();
   await expect(page.locator('#startupState')).toBeVisible();
   await expect(page.locator('#startupMsg')).toContainText('مفتاح المزامنة');
-  await expect(page.locator('#startupKey')).toBeVisible();
-  expect(await page.locator('.task').count()).toBe(0); // no default schedule presented as data
 });
 
 test('add, edit title, edit time, edit period, complete, uncomplete, delete', async ({ page }) => {
