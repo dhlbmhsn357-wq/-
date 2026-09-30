@@ -19,7 +19,7 @@ test('schema can be recreated from scratch', async () => {
     assert.ok(tables.includes(t), `missing table ${t}`);
   }
   const cols = (await db.query(`select column_name from information_schema.columns where table_name='ayyam_data'`)).rows.map((r) => r.column_name);
-  assert.deepEqual(cols.sort(), ['data', 'epoch', 'id', 'last_op_id', 'revision', 'updated_at']);
+  assert.deepEqual(cols.sort(), ['data', 'epoch', 'id', 'last_op_id', 'revision', 'updated_at', 'user_id']); // +user_id (P1 additive)
 });
 
 test('upgrade keeps the existing row byte-for-byte and starts it at revision 1', async () => {
