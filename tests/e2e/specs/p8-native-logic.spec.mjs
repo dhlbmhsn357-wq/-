@@ -44,26 +44,27 @@ test('deep link: setSessionFromUrl establishes a session from recovery tokens an
   await prepare(page, { key: false, now: '2026-09-28T09:00:00' });
   await page.goto('/');
   await expect(page.locator('#authView')).toBeVisible({ timeout: 15000 });
-  // implicit flow: tokens in the fragment (access_token IS the uid in the mock)
-  const recovery = await page.evaluate(async () => {
-    const sb = window.supabase.createClient('u', 'k');
-    const r = await window.AyyamAccount.setSessionFromUrl(sb, 'ayyam://reset#access_token=uid-1111&refresh_token=rtok&type=recovery');
+  // An ISOLATED stub client (not the app's shared mock) so establishing a session here doesn't fire the app's
+  // own auth listener and reload the page mid-evaluate — we're unit-testing the pure parser. (No eval: CSP.)
+  const run = (url) => page.evaluate(async (u) => {
+    const st = {};
+    const sb = { auth: {
+      setSession: async (o) => { if (!o || !o.access_token) return { data: { session: null }, error: { message: 'invalid' } }; st.s = { access_token: o.access_token, user: { id: o.access_token } }; return { data: { session: st.s }, error: null }; },
+      exchangeCodeForSession: async (c) => { if (!c) return { data: { session: null }, error: { message: 'invalid' } }; st.s = { access_token: c, user: { id: c } }; return { data: { session: st.s }, error: null }; },
+      getSession: async () => ({ data: { session: st.s || null }, error: null }) } };
+    const r = await window.AyyamAccount.setSessionFromUrl(sb, u);
     const s = await window.AyyamAccount.getSession(sb);
     return { r, uid: window.AyyamAccount.userIdOf(s) };
-  });
+  }, url);
+  // implicit flow: tokens in the fragment (access_token IS the uid in the stub)
+  const recovery = await run('ayyam://reset#access_token=uid-1111&refresh_token=rtok&type=recovery');
   expect(recovery.r.ok).toBe(true);
   expect(recovery.r.type).toBe('recovery');
   expect(recovery.uid).toBe('uid-1111');
   // PKCE flow: ?code=...
-  const pkce = await page.evaluate(async () => {
-    const sb = window.supabase.createClient('u', 'k');
-    return window.AyyamAccount.setSessionFromUrl(sb, 'ayyam://auth?code=uid-2222&type=signup');
-  });
-  expect(pkce.ok).toBe(true);
+  const pkce = await run('ayyam://auth?code=uid-2222&type=signup');
+  expect(pkce.r.ok).toBe(true);
   // a broken/empty link fails cleanly (no throw), so the handler shows "link expired"
-  const bad = await page.evaluate(async () => {
-    const sb = window.supabase.createClient('u', 'k');
-    return window.AyyamAccount.setSessionFromUrl(sb, 'ayyam://reset');
-  });
+  const bad = (await run('ayyam://reset')).r;
   expect(bad.ok).toBe(false);
 });
