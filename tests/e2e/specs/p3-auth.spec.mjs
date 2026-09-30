@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { prepare, resetBackend } from '../helpers.mjs';
+import { prepare, resetBackend, skipOnboarding } from '../helpers.mjs';
 
 // The auth flows reload the page on session transitions, so these are slow by nature.
 test.beforeEach(async ({ request }) => { await resetBackend(request); });
@@ -22,6 +22,9 @@ test('a new user is taken to the account screen (not the device key) and can cre
   await page.locator('#authSubmit').click();
   // migration/prep runs, then a controlled reload lands in the (empty) account — the gate is gone
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
+  await skipOnboarding(page);                                          // a new account starts the P5 tour
+  // the empty account shows the welcoming empty state (no auto-added worship), and we are signed in
+  await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 10000 });
   await page.locator('#openSettings').click();
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 10000 });   // signed in
 });
@@ -54,9 +57,12 @@ test('the session is restored after a restart (no auth gate on reload)', async (
   await page.locator('#authPass').fill('pass123');
   await page.locator('#authSubmit').click();                          // sign up
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
+  await skipOnboarding(page);
   await page.reload();
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 });
+  // restored into the account (no auth gate, no tour again — completion is server-side)
+  await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });
   await expect(page.locator('#authView')).toBeHidden();
+  await expect(page.locator('#onbView')).toBeHidden();
   await page.locator('#openSettings').click();
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 10000 });   // still signed in
 });
@@ -74,6 +80,7 @@ test('a password-recovery link opens the reset screen and updates the password',
   await page.locator('#authPass').fill('pass123');
   await page.locator('#authSubmit').click();                          // sign up
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
+  await skipOnboarding(page);
   // simulate arriving via the recovery link (supabase-js fires PASSWORD_RECOVERY with a short session)
   const sess = await page.evaluate(() => JSON.parse(localStorage.getItem('ayyam_e2e_session_v1')));
   await page.evaluate((s) => window.supabase.__fireRecovery(s), sess);

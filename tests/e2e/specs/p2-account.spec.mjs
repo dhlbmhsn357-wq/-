@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { prepare, resetBackend, addTask, taskRow, waitSynced } from '../helpers.mjs';
+import { prepare, resetBackend, addTask, taskRow, waitSynced, skipOnboarding } from '../helpers.mjs';
 
 test.beforeEach(async ({ request }) => { await resetBackend(request); });
 // The account flow reloads the page several times (auth transitions), so these are slow by nature.
@@ -14,6 +14,7 @@ async function signUp(page, email, password) {
   await page.locator('#authEmail').fill(email);
   await page.locator('#authPass').fill(password);
   await page.locator('#authSubmit').click();
+  await skipOnboarding(page);                                  // a new account starts the P5 tour → dismiss it
 }
 
 test('signup migrates the legacy device data into the new account (nothing lost), then account mode syncs', async ({ page }) => {
@@ -63,9 +64,10 @@ test('two accounts on the same device are isolated: B never sees A private data'
   await expect(page.locator('#acctSignOut')).toBeVisible();
   await page.locator('#acctSignOut').click();
   await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 }); // reloaded into legacy
-  // sign up B on the same device (re-open settings after the reload)
+  // sign up B on the same device (re-open settings after the reload). B is a fresh, empty account (the legacy
+  // 'main' was already claimed by A), so it lands on the empty state — not A's data, and nothing auto-added.
   await signUp(page, 'b@t.test', 'passB1');
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 });
+  await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });
   // B must NOT see A's private task
   await expect(page.locator('.task-title', { hasText: 'سرّ-حساب-أ' })).toHaveCount(0);
 });

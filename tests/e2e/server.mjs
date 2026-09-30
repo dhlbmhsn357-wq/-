@@ -68,6 +68,9 @@ const RPC = {
   ayyam_track: ['p_name', 'p_platform', 'p_app_version', 'p_display_name'],
   ayyam_admin_overview: [],
   ayyam_admin_users: ['p_search', 'p_limit', 'p_offset', 'p_sort', 'p_dir'],
+  // P5 onboarding
+  ayyam_onboarding_get: [],
+  ayyam_onboarding_progress: ['p_step', 'p_done', 'p_via'],
 };
 const JSON_ARG = new Set(['p_data']);
 const authUsers = new Map();  // email → { id, password } (mock GoTrue)
@@ -98,7 +101,7 @@ async function callRpc(fn, args, token) {
   const order = RPC[fn];
   if (!order) return { error: { message: 'not allowed' } };
   const params = order.map((k) => (JSON_ARG.has(k) ? JSON.stringify(args[k]) : args[k]));
-  const casts = order.map((k, i) => `$${i + 1}${JSON_ARG.has(k) ? '::jsonb' : (k.includes('revision') || k.includes('snapshot') ? '::bigint' : (k.includes('op_id') ? '::uuid' : (k === 'p_limit' || k === 'p_offset' ? '::int' : '')))}`);
+  const casts = order.map((k, i) => `$${i + 1}${JSON_ARG.has(k) ? '::jsonb' : (k.includes('revision') || k.includes('snapshot') ? '::bigint' : (k.includes('op_id') ? '::uuid' : (k === 'p_limit' || k === 'p_offset' || k === 'p_step' ? '::int' : '')))}`);
   // A token (mock JWT = the user's uid) runs the call as the `authenticated` role with auth.uid()=token,
   // exactly as PostgREST does for a signed-in supabase-js client. No token → the legacy `anon` path.
   return tx(async () => {

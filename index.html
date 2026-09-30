@@ -21,6 +21,7 @@
 <script src="js/account.js"></script>
 <script src="js/auth-ui.js"></script>
 <script src="js/admin.js"></script>
+<script src="js/onboarding.js"></script>
 <script src="js/time-model.js"></script>
 <script src="js/routines-model.js"></script>
 <script src="js/analytics-model.js"></script>
@@ -52,6 +53,8 @@
 <div id="authView" class="auth-view hidden"></div>
 <!-- Admin dashboard (P4). Rendered by js/admin.js. Reachable only when is_admin() is true. -->
 <div id="adminView" class="admin-view hidden"></div>
+<!-- First-time onboarding (P5). Rendered by js/onboarding.js (spotlight tour + optional starter). -->
+<div id="onbView" class="onb-view hidden"></div>
 
 <div id="syncBadge" class="sync-badge hidden"></div>
 <!-- App update available banner -->
@@ -193,6 +196,7 @@
       <h3>الحساب</h3>
       <div id="accountBox" class="account-box"></div>
       <div id="adminEntry"></div>
+      <div id="onbEntry"></div>
     </div>
     <p style="color:var(--text-dim);font-size:13px;margin-top:22px;">
       عدّل جدولك المتكرر لكل يوم. أي تعديل هنا يطبَّق من اليوم فصاعدًا، والأيام السابقة تحتفظ بمهامها كما كانت.

@@ -610,15 +610,76 @@
         p_display_name: displayName || accountDisplayName || null }), SYNC_TIMEOUT_MS);
     }catch(e){}
   }
-  // onboarding_completed once per account (until P5 owns the real onboarding finish). Proxy: first ready load.
-  function maybeOnboarded(){
+  // ---------- first-time onboarding (P5): a calm spotlight tour with REAL server-side completion. Shown only
+  // for a first account (server onboarding_completed_at is null); resumable (server step); skip/replay safe.
+  const ONBOARDING_STEPS = [
+    { icon:'🌙', title:'أهلًا بك في أيام', body:'رفيقك اليومي لتنظيم صلواتك وأورادك ومهامك، ومتابعة أيامك بثبات.' },
+    { target:'.hero', title:'صفحة اليوم', body:'هنا جدول يومك بحسب مواقيت الصلاة — تابع ما أنجزته وما تبقّى بلمحة.' },
+    { target:'#fabAdd', title:'إضافة مهمة', body:'من هذا الزر تضيف مهمة أو وردًا جديدًا في أي وقت.' },
+    { icon:'🔁', title:'التكرار', body:'لكل مهمة اختر تكرارها: اليوم فقط، أو يوميًا، أو أسبوعيًا، أو أيامًا محددة.' },
+    { icon:'🌿', title:'المرونة', body:'يومك ليس دائمًا واحدًا: علّم المهمة «معذور» بلا تقصير، أو «استبدلها» بأخرى.' },
+    { target:'#openCalendar', title:'التقويم', body:'اعرض شهرك كاملًا وتابع اتساقك يومًا بيوم.' },
+    { target:'#openReports', title:'تحليل الأداء', body:'رؤى هادئة عن أنماطك ومواطن قوّتك، دون أحكام.' },
+    { icon:'✨', title:'ابدأ يومك', body:'كل يوم فرصة جديدة. لنبدأ أولى خطواتك في أيام.', cta:'ابدأ يومك' },
+  ];
+  // Suggested starter items — added as daily routines ONLY when the user explicitly ticks them.
+  const STARTER_SUGGESTIONS = [
+    { id:'st-fajr-sunnah',    title:'ركعتا الفجر',   period:'fajr' },
+    { id:'st-morning-adhkar', title:'أذكار الصباح',  period:'fajr' },
+    { id:'st-quran-wird',     title:'ورد القرآن',    period:'dhuhr' },
+    { id:'st-evening-adhkar', title:'أذكار المساء',  period:'maghrib' },
+    { id:'st-witr',           title:'الوتر',         period:'isha' },
+    { id:'st-exercise',       title:'رياضة',         period:'asr' },
+  ];
+  let onboardingActive = false;
+  async function checkOnboarding(){
     try{
-      if(!(sessionActive && accountUid)) return;
-      const k = 'ayyam_onboarded_v1::' + accountUid;
-      if(localStorage.getItem(k)) return;
-      localStorage.setItem(k, '1');
-      track('onboarding_completed');
+      if(!(sb && accountMode && globalThis.AyyamOnboarding)) return;
+      const { data, error } = await withTimeout(sb.rpc('ayyam_onboarding_get'), SYNC_TIMEOUT_MS);
+      if(error || !data || data.status!=='ok' || data.completed) return; // already onboarded (server truth)
+      startOnboarding(Number(data.step)||0);
     }catch(e){}
+  }
+  function startOnboarding(startStep){
+    if(onboardingActive) return; onboardingActive = true;
+    try{ $('mainView').classList.remove('hidden'); $('reportsView').classList.add('hidden'); $('calendarView') && $('calendarView').classList.add('hidden'); $('settingsView').classList.add('hidden'); }catch(e){}
+    globalThis.AyyamOnboarding.startTour({
+      steps: ONBOARDING_STEPS,
+      startStep: startStep,
+      onProgress: (i)=>{ try{ sb.rpc('ayyam_onboarding_progress', { p_step:i, p_done:false }); }catch(e){} },
+      onDone: async (via)=>{
+        onboardingActive = false;
+        try{ await withTimeout(sb.rpc('ayyam_onboarding_progress', { p_step:ONBOARDING_STEPS.length-1, p_done:true, p_via:via }), SYNC_TIMEOUT_MS); }catch(e){}
+        // Offer the optional starter ONLY on a genuine finish of a still-empty account (never on skip/replay).
+        if(via==='finished' && enrichedIsEmpty() && !onboardingReplay){ openStarterSetup(); }
+        onboardingReplay = false;
+      },
+    });
+  }
+  let onboardingReplay = false;
+  function replayOnboarding(){ onboardingReplay = true; startOnboarding(0); }
+  function openStarterSetup(){
+    if(!globalThis.AyyamOnboarding) return;
+    globalThis.AyyamOnboarding.startStarter({
+      suggestions: STARTER_SUGGESTIONS,
+      onApply: async (ids)=>{ await applyStarter(ids); },
+      onSkip: ()=>{ render(); },
+    });
+  }
+  // Add ONLY the explicitly-selected suggestions, as daily routines from today forward. Never automatic.
+  async function applyStarter(ids){
+    try{
+      if(!ids || !ids.length){ render(); return; }
+      await ensureRoutinesActive(); // new empty account: turn the recurrence engine on so daily routines show
+      const from = todayKey();
+      ids.forEach((id)=>{
+        const sug = STARTER_SUGGESTIONS.find(s=>s.id===id); if(!sug) return;
+        const rec = { freq:'daily', days:[], from, to:null };
+        const nidv = nid();
+        routines[nidv] = { id:nidv, seriesId:nidv, title:sug.title, time:'', timeValue:'', period:sug.period, order:Object.keys(routines).length, rec };
+      });
+      await saveBundle('sync'); render();
+    }catch(e){ render(); }
   }
 
   // ---------- admin access (P4): revealed ONLY when is_admin() is true. Authority is 100% backend-side —
@@ -784,6 +845,21 @@
       if(store) store.logDiag({ type:'routines-migrate-fail', message: String(e && e.message || e) });
       // fail-safe: keep old state untouched; migrationDate stays '' → tasksForDate uses the legacy path.
     }
+  }
+
+  // Force the recurrence engine ON even for an empty account. A new account is no longer auto-seeded (P5),
+  // so activateRoutinesIfNeeded() no-ops on an empty bundle and migrationDate stays '' → tasksForDate would
+  // use the legacy template path and never show routines. Call this before the FIRST add on such an account.
+  async function ensureRoutinesActive(){
+    if(migrationDate) return true;
+    if(typeof AyyamRoutines==='undefined' || typeof AyyamTime==='undefined' || !M) return false;
+    try{
+      const b = currentBundle(); const tz = dayTz(); const today = AyyamTime.todayKey(tz);
+      const out = AyyamRoutines.migrate(b, today, tz);
+      if(!out.migrationDate) return false;
+      setState(sanitizeBundle(out)); routinesActivated = true;
+      return true;
+    }catch(e){ return false; }
   }
 
   // Reconnecting/refocusing/resuming always syncs — to PUSH our changes and PULL other devices'.
@@ -1195,7 +1271,14 @@
     groupsEl.innerHTML = '';
 
     if(tasks.length===0){
-      groupsEl.innerHTML = '<p class="empty">لا مهام في هذا اليوم بعد. اضغط + لإضافة أول مهمة.</p>';
+      groupsEl.innerHTML =
+        '<div class="empty-state" id="emptyToday">'
+        + '<div class="empty-emoji">🌱</div>'
+        + '<h3 class="empty-title">يومك يبدأ من هنا</h3>'
+        + '<p class="empty-sub">أضف أول مهمة تريد المحافظة عليها.</p>'
+        + '<button class="btn primary" id="emptyAddTask" style="max-width:220px;">إضافة أول مهمة</button>'
+        + '</div>';
+      const b = $('emptyAddTask'); if(b) b.addEventListener('click', ()=> openAddSheet());
       return;
     }
 
@@ -1642,6 +1725,7 @@
 
     if(!editingTask){
       // ADD from the day view
+      await ensureRoutinesActive(); // empty account: ensure the recurrence engine is on before the first add
       if(pendingRec.freq==='once'){
         const log = ensureLog(selKey);
         log.extra.push({ id:nid(), title, time:'', timeValue, period }); // one-off on this date
@@ -2671,14 +2755,14 @@
   }
   async function runFirstLoad(){
     const r = await firstLoadPull();
-    if(r==='ready'){
+    if(r==='ready'){ hideStartupState(); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
+    else if(r==='empty'){
       hideStartupState();
-      // A brand-new account row exists but is empty (just created by migration/adopt) → give the user the
-      // starter schedule instead of a blank screen. Baseline-stamped, so any real data still wins on merge.
-      if(accountMode && enrichedIsEmpty()){ await seedDefault(false); }
+      // Account mode: a NEW account starts EMPTY — the onboarding + optional starter let the user choose what
+      // to keep. We never auto-add worship/habits (P5). Legacy/offline devices keep the shipped starter schedule.
+      if(!accountMode){ await seedDefault(false); }
       await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render();
     }
-    else if(r==='empty'){ hideStartupState(); await seedDefault(false); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
     else if(r==='need-auth'){
       // An account session that can't be confirmed (expired/offline) → ask to sign in; stay usable offline.
       if(loadingEl) loadingEl.classList.add('hidden');
@@ -2738,7 +2822,13 @@
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
   authReady = true;   // from now on, real auth transitions (sign-in/out/switch) trigger a controlled reload
   try{ setupAccountUI(); }catch(e){}
-  if(accountMode){ track('app_open'); if(!enrichedIsEmpty()) maybeOnboarded(); checkAdmin(); } // P4 analytics + admin reveal
+  if(accountMode){ track('app_open'); checkAdmin(); checkOnboarding(); } // P4 analytics + admin reveal + P5 onboarding
+  // Settings → "إعادة الجولة التعريفية" (account users; the tour is client-side, completion stays server-side).
+  if(accountMode && globalThis.AyyamOnboarding){
+    const oe = $('onbEntry');
+    if(oe){ oe.innerHTML = '<button class="btn ghost acct-open" id="replayOnb" style="margin-top:10px;">إعادة الجولة التعريفية</button>';
+      const rb=$('replayOnb'); if(rb) rb.addEventListener('click', ()=>{ try{ $('settingsView').classList.add('hidden'); $('mainView').classList.remove('hidden'); }catch(e){} replayOnboarding(); }); }
+  }
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
   scheduleNotifPlan();  // seed the local reminder plan
   if(NATIVE){

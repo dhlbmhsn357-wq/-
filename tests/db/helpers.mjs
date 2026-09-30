@@ -125,6 +125,10 @@ export const rpc2 = {
   adminOverview: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_admin_overview() as r')).rows[0].r,
   adminUsers: async (db, uid, { search = null, limit = 25, offset = 0, sort = 'last_seen_at', dir = 'desc' } = {}) =>
     (await asUser(db, uid, 'select public.ayyam_admin_users($1,$2,$3,$4,$5) as r', [search, limit, offset, sort, dir])).rows[0].r,
+  // P5 onboarding
+  onbGet: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_onboarding_get() as r')).rows[0].r,
+  onbProgress: async (db, uid, { step, done = false, via = null } = {}) =>
+    (await asUser(db, uid, 'select public.ayyam_onboarding_progress($1,$2,$3) as r', [step, done, via])).rows[0].r,
 };
 
 /** Grant a user the admin role the ONLY legitimate way — as service_role (like the SQL editor). */

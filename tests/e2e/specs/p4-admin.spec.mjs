@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { prepare, resetBackend } from '../helpers.mjs';
+import { prepare, resetBackend, skipOnboarding } from '../helpers.mjs';
 
 test.beforeEach(async ({ request }) => { await resetBackend(request); });
 test.describe.configure({ retries: 2, timeout: 90000 });
@@ -13,7 +13,8 @@ async function signupFresh(page, email, password) {
   await page.locator('#authPass').fill(password);
   await page.locator('#authSubmit').click();                 // gate defaults to sign-up
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 });
+  await skipOnboarding(page);                                // dismiss the P5 first-time tour
+  await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });
 }
 
 test('a normal user has NO admin entry and cannot open the dashboard (backend-gated)', async ({ page }) => {
@@ -30,7 +31,7 @@ test('an admin sees the dashboard: overview metrics + a server-paginated, search
   await signupFresh(page, 'admin@t.test', 'pass123');
   await request.post('/__ctl/make-admin?email=admin@t.test');  // granted the only legit way (service_role)
   await page.reload();
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 });
+  await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });  // onboarding already done → no tour
 
   await page.locator('#openSettings').click();
   await expect(page.locator('#openAdmin')).toBeVisible({ timeout: 10000 });   // admin-only entry revealed
