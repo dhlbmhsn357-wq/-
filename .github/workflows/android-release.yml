@@ -90,8 +90,11 @@ jobs:
           VC=$(grep -E "versionCode" android/app/build.gradle | grep -oE "[0-9]+" | head -1)
           VN=$(grep -E 'versionName' android/app/build.gradle | grep -oE '"[^"]+"' | tr -d '"' | head -1)
           BASE="https://github.com/${{ github.repository }}/releases/latest/download"
-          printf '{\n  "versionCode": %s,\n  "versionName": "%s",\n  "apkUrl": "%s/app-release.apk",\n  "sha256": "%s",\n  "mandatory": false,\n  "notes": "تحديث أيام %s"\n}\n' \
-            "$VC" "$VN" "$BASE" "$SHA" "$VN" > update.release.json
+          # Release notes: an ARRAY from android/release-notes.json (shown in-app on Android + Web). Falls back
+          # to a single generic line if the file is missing/invalid.
+          NOTES=$(jq -c . android/release-notes.json 2>/dev/null || echo "[\"تحديث أيام $VN\"]")
+          jq -n --argjson vc "$VC" --arg vn "$VN" --arg url "$BASE/app-release.apk" --arg sha "$SHA" --argjson notes "$NOTES" \
+            '{versionCode:$vc, versionName:$vn, apkUrl:$url, sha256:$sha, mandatory:false, notes:$notes}' > update.release.json
           echo "== generated update.json =="; cat update.release.json
       - name: Publish DRAFT GitHub Release (hosts APK + update.json; owner clicks Publish to go live)
         if: startsWith(github.ref, 'refs/tags/v')

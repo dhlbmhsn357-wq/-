@@ -95,6 +95,11 @@
   // See js/update-model.js (validation) and update.json in the repo (format example).
   const UPDATE_MANIFEST_URL = 'https://github.com/dhlbmhsn357-wq/-/releases/latest/download/update.json';
   const LS_UPDATE_CHECK = 'ayyam_update_check_v1';
+  // Check for updates soon after any app open (not once per 6h): a 20-min throttle prevents abuse while never
+  // hiding a published update for long. Used for the native APK check; the web SW checks on load + on focus.
+  const NATIVE_UPDATE_INTERVAL = 20 * 60 * 1000;
+  // Notes shown in the WEB update prompt (Android reads notes from update.json). Keep in step with a release.
+  const RELEASE_NOTES = ['حسابات ومزامنة آمنة بين أجهزتك', 'جولة تعريفية جديدة', 'تصميم محسّن بالكامل', 'تحسينات الاستقرار'];
 
   const LS_TPL = 'ayyam_template_v1';
   const LS_LOG = 'ayyam_logs_v1';
@@ -727,6 +732,67 @@
     }catch(e){}
   }
 
+  // ---------- optional LOCAL app PIN (item 5): quick unlock on a trusted device. NOT a server credential. ----------
+  const PIN = () => globalThis.AyyamPinLock;
+  let pinEntry = '', pinMode = 'unlock', pinOnDone = null, pinFirst = '';
+  function pinDotsHtml(n){ let s=''; for(let i=0;i<4;i++) s += '<span class="pin-dot'+(i<n?' on':'')+'"></span>'; return s; }
+  function renderPin(title, sub, msg){
+    const v=$('pinView'); if(!v) return;
+    v.classList.remove('hidden'); document.body.classList.add('pin-open');
+    const keys = ['١','٢','٣','٤','٥','٦','٧','٨','٩','','٠','⌫'];
+    const digit = { '١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9','٠':'0' };
+    v.innerHTML = '<div class="pin-card">'
+      + '<div class="auth-brand">أيام</div>'
+      + '<h2 class="pin-title">'+escapeHtml(title)+'</h2>'
+      + '<p class="pin-sub">'+escapeHtml(sub||'')+'</p>'
+      + '<div class="pin-dots">'+pinDotsHtml(pinEntry.length)+'</div>'
+      + '<div class="pin-msg" id="pinMsg">'+escapeHtml(msg||'')+'</div>'
+      + '<div class="pin-pad">'+keys.map(k=> k===''?'<span class="pin-key-blank"></span>':'<button class="pin-key" data-k="'+(digit[k]||k)+'">'+k+'</button>').join('')+'</div>'
+      + (pinMode==='setup' ? '<button class="btn ghost pin-cancel" id="pinCancel">إلغاء</button>' : '')
+      + '</div>';
+    v.querySelectorAll('.pin-key').forEach(b=> b.addEventListener('click', ()=> pinPress(b.getAttribute('data-k'))));
+    const c=$('pinCancel'); if(c) c.addEventListener('click', ()=>{ closePin(); if(pinOnDone){ const d=pinOnDone; pinOnDone=null; d({cancelled:true}); } });
+  }
+  function pinMsg(t){ const m=$('pinMsg'); if(m) m.textContent=t||''; }
+  function pinUpdateDots(){ const v=$('pinView'); const d=v&&v.querySelector('.pin-dots'); if(d) d.innerHTML=pinDotsHtml(pinEntry.length); }
+  async function pinPress(k){
+    if(k==='⌫'){ pinEntry=pinEntry.slice(0,-1); pinUpdateDots(); return; }
+    if(pinEntry.length>=4) return;
+    pinEntry += k; pinUpdateDots();
+    if(pinEntry.length===4) await pinComplete();
+  }
+  async function pinComplete(){
+    const entered = pinEntry; pinEntry='';
+    if(pinMode==='setup'){
+      if(!pinFirst){ pinFirst=entered; renderPin('أكّد الرمز','أعد إدخال الرمز نفسه'); return; }
+      if(entered!==pinFirst){ pinFirst=''; renderPin('تعيين رمز PIN','اختر رمزًا من ٤ أرقام', 'الرمزان غير متطابقين. حاول مجددًا.'); return; }
+      const r = await PIN().setPin(entered);
+      if(!r || !r.ok){ pinMsg('تعذّر حفظ الرمز على هذا الجهاز.'); return; }
+      closePin(); if(pinOnDone){ const d=pinOnDone; pinOnDone=null; d({ok:true}); }
+    } else {
+      const r = await PIN().verify(entered);
+      if(r && r.ok){ closePin(); if(pinOnDone){ const d=pinOnDone; pinOnDone=null; d({ok:true}); } return; }
+      pinUpdateDots();
+      if(r && r.reason==='locked') pinMsg('محاولات كثيرة. انتظر '+toArabicNum(Math.ceil((r.waitMs||0)/1000))+' ثانية.');
+      else pinMsg('رمز غير صحيح.' + (r && r.waitMs ? ' انتظر '+toArabicNum(Math.ceil(r.waitMs/1000))+' ثانية.' : ''));
+    }
+  }
+  function closePin(){ const v=$('pinView'); if(v){ v.classList.add('hidden'); v.innerHTML=''; } document.body.classList.remove('pin-open'); pinEntry=''; pinFirst=''; }
+  function openPinLock(onDone){ if(!(PIN() && PIN().isEnabled())){ if(onDone) onDone({ok:true}); return; } pinMode='unlock'; pinEntry=''; pinOnDone=onDone||null; renderPin('أدخل رمز PIN','لفتح أيام'); }
+  function openPinSetup(onDone){ if(!(PIN() && PIN().supported())){ alert('رمز PIN غير مدعوم على هذا الجهاز.'); if(onDone) onDone({ok:false}); return; } pinMode='setup'; pinEntry=''; pinFirst=''; pinOnDone=onDone||null; renderPin('تعيين رمز PIN','اختر رمزًا من ٤ أرقام'); }
+  // Settings toggle: enable → set a PIN; disable → require the current PIN first.
+  function setupPinToggle(){
+    const t=$('pinToggle'); if(!t || !PIN()) return;
+    t.checked = PIN().isEnabled();
+    t.addEventListener('change', ()=>{
+      if(t.checked){
+        openPinSetup((r)=>{ if(!(r && r.ok)) t.checked=false; });
+      } else {
+        openPinLock((r)=>{ if(r && r.ok){ PIN().clearPin(); t.checked=false; } else { t.checked=true; } });
+      }
+    });
+  }
+
   const MAX_ATTEMPTS = 6;
   const backoff = a => Math.min(1000 * Math.pow(2, a), 15000) + Math.floor(Math.random()*400);
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
@@ -1129,6 +1195,11 @@
   // Android hardware/system Back: close the top-most thing; exit only when nothing is left to close.
   function handleBack(){
     try{
+      // PIN gate: on unlock it consumes Back (can't be bypassed); on setup, Back cancels.
+      if($('pinView') && !$('pinView').classList.contains('hidden')){
+        if(pinMode==='setup'){ closePin(); if(pinOnDone){ const d=pinOnDone; pinOnDone=null; d({cancelled:true}); } }
+        return;
+      }
       // Top-most full-screen flows first (onboarding z-250 > auth z-240 > admin z-230) — never exit mid-flow.
       if(globalThis.AyyamOnboarding && globalThis.AyyamOnboarding.isOpen()){ globalThis.AyyamOnboarding.back(); return; } // onboarding: prev/exit
       if(globalThis.AyyamAuthUI && globalThis.AyyamAuthUI.isOpen()){ globalThis.AyyamAuthUI.handleBack(); return; }        // auth: sub-screen→back / gate consumes
@@ -2487,7 +2558,7 @@
   // Shows the SAME compact "#updateBanner" pill the web SW-update flow uses. On Android the pill opens an
   // update sheet (notes + progress); the actual download/verify/install is done by the native UpdaterBridge
   // (SHA-256 verified, same-signature enforced by the OS, user confirms on the system installer screen).
-  let pendingUpdate = null, updateProgressWired = false;
+  let pendingUpdate = null, updateAction = null, updateProgressWired = false;
   function showUpdatePill(onClick){
     const banner = $('updateBanner'); if(!banner) return;
     banner.classList.remove('hidden');
@@ -2503,9 +2574,12 @@
     const m = pendingUpdate; if(!m) return;
     const ov=$('updateOverlay'); if(!ov) return;
     const v=$('updateSheetVersion'); if(v) v.textContent = m.versionName ? ('الإصدار '+m.versionName) : 'إصدار جديد';
-    const n=$('updateSheetNotes'); if(n) n.textContent = m.notes || 'تحسينات وإصلاحات.';
+    const n=$('updateSheetNotes'); if(n){
+      const list = (m.notes && m.notes.length) ? m.notes : ['تحسينات وإصلاحات.'];
+      n.innerHTML = list.map(x=>'• '+escapeHtml(x)).join('<br>');
+    }
     hideUpdateProgress();
-    const btn=$('updateInstall'); if(btn) btn.disabled=false;
+    const btn=$('updateInstall'); if(btn){ btn.disabled=false; btn.textContent='تحديث الآن'; btn.onclick = ()=>{ if(typeof updateAction==='function') updateAction(); }; }
     ov.classList.add('show');
   }
   function closeUpdateSheet(){ const ov=$('updateOverlay'); if(ov) ov.classList.remove('show'); }
@@ -2542,19 +2616,18 @@
     if(!(NATIVE && AyyamNative.updaterConfigured && AyyamNative.updaterConfigured())) return;
     if(!navigator.onLine) return;
     let last=0; try{ last=parseInt(localStorage.getItem(LS_UPDATE_CHECK)||'0',10)||0; }catch(e){}
-    if(!AyyamUpdate.shouldCheck(last, Date.now())) return;
+    if(!AyyamUpdate.shouldCheck(last, Date.now(), NATIVE_UPDATE_INTERVAL)) return;
     let txt=null;
     try{ const res=await fetch(UPDATE_MANIFEST_URL,{cache:'no-store'}); if(!res.ok) return; txt=await res.text(); }catch(e){ return; }
     try{ localStorage.setItem(LS_UPDATE_CHECK, String(Date.now())); }catch(e){}
     const manifest = AyyamUpdate.parseManifest(txt); if(!manifest) return;
     let installed=null; try{ const info=await AyyamNative.appInfo(); installed=info&&info.build; }catch(e){}
     if(!AyyamUpdate.isUpdateAvailable(manifest, installed)) return; // up-to-date → no badge
-    pendingUpdate = manifest;
+    pendingUpdate = manifest; updateAction = runAndroidUpdate;
     if(!updateProgressWired){ updateProgressWired=true; try{ AyyamNative.updater.onProgress((ev)=> showUpdateProgress((ev&&ev.percent)||0)); }catch(e){} }
     showUpdatePill(openUpdateSheet);
   }
   function setupUpdateSheet(){
-    const inst=$('updateInstall'); if(inst) inst.addEventListener('click', runAndroidUpdate);
     const cl=$('updateClose'); if(cl) cl.addEventListener('click', closeUpdateSheet);
   }
 
@@ -2590,12 +2663,16 @@
       });
     }
     function showUpdateBanner(worker){
-      const banner = $('updateBanner'); if(!banner) return;
-      banner.classList.remove('hidden');
-      $('updateNow').onclick = ()=>{
-        $('updateNow').disabled = true;
-        worker.postMessage({ type:'SKIP_WAITING' }); // activate the waiting version → controllerchange → reload
+      // Same UX as Android: a calm pill → a sheet with the version + release notes + «تحديث الآن»/«لاحقًا».
+      // «تحديث الآن» flushes nothing to lose (local data persists across the SW activation), then
+      // SKIP_WAITING → activate → the controllerchange handler reloads ONCE onto the coherent version.
+      pendingUpdate = { versionName: APP_VERSION, notes: RELEASE_NOTES };
+      updateAction = async ()=>{
+        const btn=$('updateInstall'); if(btn) btn.disabled=true;
+        try{ if(isPending() && navigator.onLine!==false) await syncNow('pre-update'); }catch(e){}
+        try{ worker.postMessage({ type:'SKIP_WAITING' }); }catch(e){}
       };
+      showUpdatePill(openUpdateSheet);
     }
 
     // ---------- Push notifications setup ----------
@@ -2733,6 +2810,10 @@
   }
   setupPWA();
 
+  // Local PIN gate: if a PIN is set and this run isn't unlocked yet, lock immediately (opaque overlay covers
+  // everything while the app loads behind it). Local convenience only — never blocks data or sync.
+  try{ if(PIN() && PIN().isEnabled() && !PIN().isUnlocked()) openPinLock(); }catch(e){}
+
   // ---------- initial data load (durable local first, then merge with Supabase) ----------
   const loadingEl = document.getElementById('loadingOverlay');
   function enrichedIsEmpty(){ return !enriched || Object.keys(enriched.reg).length===0; }
@@ -2837,7 +2918,8 @@
   $('startupOffline').addEventListener('click', continueOffline);
 
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
-  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); checkNativeUpdate(); }); }catch(e){} }
+  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); checkNativeUpdate();
+    try{ if(PIN() && PIN().isEnabled()){ PIN().relock(); openPinLock(); } }catch(e){} }); }catch(e){} }  // re-lock on app resume
 
   // P2: detect an authenticated session BEFORE opening storage, so account mode picks the per-user DB.
   // No session → legacy mode (byte-identical to the shipped app). Auth changes trigger a controlled reload.
@@ -2871,6 +2953,7 @@
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
   authReady = true;   // from now on, real auth transitions (sign-in/out/switch) trigger a controlled reload
   try{ setupAccountUI(); }catch(e){}
+  try{ setupPinToggle(); }catch(e){}
   if(accountMode){ track('app_open'); checkAdmin(); checkOnboarding(); updateGreeting(); } // P4 analytics + admin reveal + P5 onboarding + greeting
   // Settings → "إعادة الجولة التعريفية" (account users; the tour is client-side, completion stays server-side).
   if(accountMode && globalThis.AyyamOnboarding){

@@ -42,3 +42,10 @@ test('shaMatches is case-insensitive and rejects non-hex', () => {
   assert.equal(U.shaMatches(SHA, 'deadbeef'), false);
   assert.equal(U.shaMatches('nothex', SHA), false);
 });
+test('release notes are normalized to a clean array (item 7)', () => {
+  assert.deepEqual(U.normalizeNotes(['حسابات آمنة', ' جولة جديدة ', '', 5]), ['حسابات آمنة', 'جولة جديدة']);
+  assert.deepEqual(U.normalizeNotes('سطر واحد'), ['سطر واحد']);
+  assert.deepEqual(U.normalizeNotes(null), []);
+  const m = U.parseManifest({ versionCode: 7, versionName: '1.2.0', apkUrl: 'https://x/app.apk', sha256: SHA, notes: ['أ', 'ب'] });
+  assert.deepEqual(m.notes, ['أ', 'ب']);
+});

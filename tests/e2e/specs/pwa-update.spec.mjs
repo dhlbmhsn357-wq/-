@@ -36,8 +36,12 @@ test('a new SW waits, shows the banner, and updating reloads onto a coherent ver
   // current session still works (not broken by the waiting worker)
   await expect(page.locator('.task-title', { hasText: 'قبل التحديث' })).toBeVisible();
 
-  // tap "تحديث الآن" → activates the new version and reloads; the new app cache replaces the old
+  // tap the pill → the update sheet shows the version + release notes + «تحديث الآن»/«لاحقًا» (same UX as Android)
   await page.locator('#updateNow').click();
+  await expect(page.locator('#updateOverlay')).toHaveClass(/show/);
+  await expect(page.locator('#updateSheetNotes')).toContainText('حسابات');
+  // «تحديث الآن» → activates the new version and reloads; the new app cache replaces the old
+  await page.locator('#updateInstall').click();
   await expect.poll(async () => {
     try { return await page.evaluate(async () => (await caches.keys()).filter((k) => k.startsWith('ayyam-app-'))); }
     catch (e) { return ['(reloading)']; } // the mid-reload context is destroyed → keep polling

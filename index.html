@@ -22,6 +22,7 @@
 <script src="js/auth-ui.js"></script>
 <script src="js/admin.js"></script>
 <script src="js/onboarding.js"></script>
+<script src="js/pin-lock.js"></script>
 <script src="js/time-model.js"></script>
 <script src="js/routines-model.js"></script>
 <script src="js/analytics-model.js"></script>
@@ -57,6 +58,8 @@
 <div id="adminView" class="admin-view hidden"></div>
 <!-- First-time onboarding (P5). Rendered by js/onboarding.js (spotlight tour + optional starter). -->
 <div id="onbView" class="onb-view hidden"></div>
+<!-- Optional local app PIN lock (item 5). Rendered by app.js; logic in js/pin-lock.js. Local-only. -->
+<div id="pinView" class="pin-view hidden"></div>
 
 <div id="syncBadge" class="sync-badge hidden"></div>
 <!-- App update available banner -->
@@ -273,7 +276,14 @@
         </label>
         <p class="report-hint" style="margin-top:8px;">عند التفعيل تظهر الودجت عدد المهام المتبقية فقط، دون أسماء المهام.</p>
       </div>
-      <div class="set-card" id="privacyNoteCard">
+      <div class="set-card" id="pinCard">
+        <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <span>قفل التطبيق برمز PIN</span>
+          <span class="toggle-switch"><input type="checkbox" id="pinToggle"><span class="toggle-slider"></span></span>
+        </label>
+        <p class="report-hint" style="margin-top:8px;">رمز من ٤ أرقام لفتح أيام بسرعة على هذا الجهاز. يُحفظ محليًا فقط، وليس كلمة مرور حسابك ولا يُرسَل لأي خادم.</p>
+      </div>
+      <div class="set-card" id="privacyNoteCard" style="margin-top:10px;">
         <p class="report-hint" style="margin-top:0;">بياناتك تُخزَّن على جهازك وتُزامَن بأمان مع حسابك فقط. لا نعرض محتوى مهامك أو عباداتك لأي طرف.</p>
       </div>
     </section>

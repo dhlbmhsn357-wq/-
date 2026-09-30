@@ -44,3 +44,33 @@ test('signup requires a name (and a password of at least 8 chars)', async ({ pag
   await page.locator('#openSettings').click();
   await expect(page.locator('#accountBox')).toContainText('سلمى');            // name in the account card
 });
+
+async function enterPin(page, pin) {
+  for (const d of String(pin).split('')) await page.locator(`.pin-key[data-k="${d}"]`).click();
+}
+
+test('optional local PIN: set it, then it locks the app on restart and unlocks with the code', async ({ page }) => {
+  await prepare(page, { key: true, now: '2026-09-28T09:00:00' });
+  await page.goto('/');
+  await expect(page.locator('.task').first()).toBeVisible();
+  // enable the PIN from Settings → privacy (click the visible toggle slider; the label toggles the checkbox)
+  await page.locator('#openSettings').click();
+  await page.locator('#pinCard .toggle-slider').click();
+  await expect(page.locator('#pinView')).toBeVisible({ timeout: 10000 });
+  await enterPin(page, '1234');                 // choose
+  await expect(page.locator('.pin-title')).toContainText('أكّد');
+  await enterPin(page, '1234');                 // confirm
+  await expect(page.locator('#pinView')).toBeHidden();
+  // simulate a real app restart (process death clears the per-session "unlocked" flag; a mere reload keeps it)
+  await page.evaluate(() => { try { sessionStorage.clear(); } catch (e) {} });
+  await page.reload();
+  await expect(page.locator('#pinView')).toBeVisible({ timeout: 15000 });
+  // wrong code → error, still locked
+  await enterPin(page, '0000');
+  await expect(page.locator('#pinMsg')).toContainText('غير صحيح');
+  await expect(page.locator('#pinView')).toBeVisible();
+  // correct code → unlocks
+  await enterPin(page, '1234');
+  await expect(page.locator('#pinView')).toBeHidden({ timeout: 10000 });
+  await expect(page.locator('.task').first()).toBeVisible();
+});

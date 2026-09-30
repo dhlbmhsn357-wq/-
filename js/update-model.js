@@ -8,6 +8,12 @@
   const SHA256_RE = /^[0-9a-f]{64}$/i;
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
   const posInt = (v) => Number.isInteger(v) && v > 0;
+  // Release notes → a clean array of short lines (accepts an array, or a single string as one line).
+  function normalizeNotes(n) {
+    if (Array.isArray(n)) return n.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim().slice(0, 140)).slice(0, 8);
+    if (typeof n === 'string' && n.trim()) return [n.trim().slice(0, 140)];
+    return [];
+  }
 
   // Parse + STRICTLY validate an update manifest. Returns a normalized object or null (never throws).
   // Security: apkUrl MUST be https (no cleartext, no file://); sha256 MUST be 64-hex (verified after
@@ -28,7 +34,7 @@
       apkUrl,
       sha256,
       mandatory: m.mandatory === true,
-      notes: typeof m.notes === 'string' ? m.notes : '',
+      notes: normalizeNotes(m.notes),   // always an array of short lines (may be empty)
     };
   }
 
@@ -54,5 +60,5 @@
     return typeof a === 'string' && typeof b === 'string' && SHA256_RE.test(a) && a.toLowerCase() === String(b).toLowerCase();
   }
 
-  global.AyyamUpdate = { parseManifest, isUpdateAvailable, shouldCheck, shaMatches, DEFAULT_INTERVAL };
+  global.AyyamUpdate = { parseManifest, isUpdateAvailable, shouldCheck, shaMatches, normalizeNotes, DEFAULT_INTERVAL };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -122,3 +122,24 @@
 
 /* ---------- Loading ---------- */
 .loading-spinner{border-color:var(--color-border);border-top-color:var(--color-primary);}
+
+/* ---------- Local PIN lock (item 5) ---------- */
+.pin-view{position:fixed;inset:0;z-index:260;background:var(--color-bg);overflow-y:auto;
+  display:flex;align-items:center;justify-content:center;padding:24px 16px;}
+body.pin-open{overflow:hidden;}
+.pin-card{width:100%;max-width:320px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:var(--space-sm);}
+.pin-card .auth-brand{font-family:var(--font-display);font-size:38px;color:var(--color-text);margin-bottom:var(--space-sm);}
+.pin-title{font-family:var(--font-ui);font-weight:var(--fw-bold);font-size:var(--text-h3);color:var(--color-text);margin:0;}
+.pin-sub{color:var(--color-text-secondary);font-size:var(--text-small);margin:0 0 var(--space-sm);}
+.pin-dots{display:flex;gap:14px;margin:var(--space-sm) 0;}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--color-border-strong);transition:background var(--motion-fast),border-color var(--motion-fast);}
+.pin-dot.on{background:var(--color-primary);border-color:var(--color-primary);}
+.pin-msg{min-height:18px;font-size:var(--text-small);color:var(--color-danger);}
+.pin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:var(--space-sm);width:100%;max-width:260px;}
+.pin-key{height:64px;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-surface);
+  color:var(--color-text);font-family:var(--font-ui);font-size:24px;font-weight:var(--fw-semibold);cursor:pointer;
+  transition:background var(--motion-fast),transform var(--motion-fast);}
+.pin-key:hover{background:var(--color-elevated);}
+.pin-key:active{transform:scale(.96);}
+.pin-key-blank{visibility:hidden;}
+.pin-cancel{margin-top:var(--space-lg);max-width:200px;}
