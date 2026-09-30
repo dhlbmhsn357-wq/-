@@ -9,6 +9,7 @@ async function signupFresh(page, email, password) {
   await prepare(page, { key: false, now: '2026-09-28T09:00:00' });
   await page.goto('/');
   await expect(page.locator('#authView')).toBeVisible({ timeout: 15000 });
+  await page.locator('#authName').fill('مستخدم أيام');
   await page.locator('#authEmail').fill(email);
   await page.locator('#authPass').fill(password);
   await page.locator('#authSubmit').click();                 // gate defaults to sign-up
@@ -18,7 +19,7 @@ async function signupFresh(page, email, password) {
 }
 
 test('a normal user has NO admin entry and cannot open the dashboard (backend-gated)', async ({ page }) => {
-  await signupFresh(page, 'user@t.test', 'pass123');
+  await signupFresh(page, 'user@t.test', 'pass1234');
   await page.locator('#openSettings').click();
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 10000 });
   await expect(page.locator('#openAdmin')).toHaveCount(0);   // no admin entry is ever rendered
@@ -28,7 +29,7 @@ test('a normal user has NO admin entry and cannot open the dashboard (backend-ga
 });
 
 test('an admin sees the dashboard: overview metrics + a server-paginated, searchable users table', async ({ page, request }) => {
-  await signupFresh(page, 'admin@t.test', 'pass123');
+  await signupFresh(page, 'admin@t.test', 'pass1234');
   await request.post('/__ctl/make-admin?email=admin@t.test');  // granted the only legit way (service_role)
   await page.reload();
   await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });  // onboarding already done → no tour

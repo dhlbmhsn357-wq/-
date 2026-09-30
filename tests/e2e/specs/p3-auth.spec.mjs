@@ -17,8 +17,9 @@ test('a new user is taken to the account screen (not the device key) and can cre
   await expect(page.locator('#authName')).toBeVisible();               // gate defaults to sign-up
   await expect(page.locator('#authSubmit')).toHaveText(/إنشاء/);
   await expect(page.locator('#startupState')).toBeHidden();            // the legacy device-key startup is NOT shown
+  await page.locator('#authName').fill('مستخدم أيام');
   await page.locator('#authEmail').fill('new@t.test');
-  await page.locator('#authPass').fill('pass123');
+  await page.locator('#authPass').fill('pass1234');
   await page.locator('#authSubmit').click();
   // migration/prep runs, then a controlled reload lands in the (empty) account — the gate is gone
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
@@ -53,8 +54,9 @@ test('forgot-password shows a neutral, non-enumerating success message', async (
 
 test('the session is restored after a restart (no auth gate on reload)', async ({ page }) => {
   await freshGate(page);
+  await page.locator('#authName').fill('مستخدم أيام');
   await page.locator('#authEmail').fill('restore@t.test');
-  await page.locator('#authPass').fill('pass123');
+  await page.locator('#authPass').fill('pass1234');
   await page.locator('#authSubmit').click();                          // sign up
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
   await skipOnboarding(page);
@@ -76,8 +78,9 @@ test('the account gate can be escaped to continue without an account', async ({ 
 
 test('a password-recovery link opens the reset screen and updates the password', async ({ page }) => {
   await freshGate(page);
+  await page.locator('#authName').fill('مستخدم أيام');
   await page.locator('#authEmail').fill('recover@t.test');
-  await page.locator('#authPass').fill('pass123');
+  await page.locator('#authPass').fill('pass1234');
   await page.locator('#authSubmit').click();                          // sign up
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
   await skipOnboarding(page);

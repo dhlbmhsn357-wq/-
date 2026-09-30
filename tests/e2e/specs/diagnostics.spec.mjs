@@ -21,8 +21,9 @@ test('diagnostics shows the safe fields and NEVER a secret', async ({ page }) =>
     'رقم المراجعة', 'رقم الجيل', 'تغييرات غير مرفوعة', 'عناصر الاسترجاع', 'الإشعارات', 'التخزين المحلي']) {
     expect(text, `diagnostics must show "${label}"`).toContain(label);
   }
-  // key status is a boolean, never the value
-  expect(text).toContain('مفتاح المزامنة: مُدخل');
+  // account status is shown (the device-key concept is retired from the UI); never a key value
+  expect(text).toContain('الحساب:');
+  expect(text).not.toContain('مفتاح المزامنة');
 
   // NEVER leak the secret device key, its hash, endpoints, coordinates or raw data
   expect(text).not.toContain(DEVICE_KEY);

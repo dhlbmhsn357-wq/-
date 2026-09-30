@@ -116,7 +116,8 @@
       saved:  {text:'☁️ تمت المزامنة', show:true},
       error:  {text:'⚠️ تعذّرت المزامنة — محفوظ على الجهاز', show:true},
       offline:{text:'📴 غير متصل — محفوظ على الجهاز، سيُرفع لاحقًا', show:true},
-      'need-key':{text:'🔑 أدخل مفتاح المزامنة', show:true},
+      'need-key':{text:'☁️ سجّل الدخول للمزامنة', show:true},
+      'need-auth':{text:'☁️ سجّل الدخول للمزامنة', show:true},
     };
     // A failed local save takes precedence: never show "saved" when the device could not store it.
     const s = storageError
@@ -527,8 +528,8 @@
     if(m.includes('not confirmed') || m.includes('not verified') || m.includes('confirm')) return 'لم يتم تأكيد بريدك بعد. افتح رسالة التأكيد في بريدك أولًا.';
     if(m.includes('invalid login') || m.includes('invalid credential') || (m.includes('invalid') && ctx==='signin')) return 'البريد أو كلمة المرور غير صحيحة.';
     if(m.includes('registered') || m.includes('exists') || m.includes('already')) return 'هذا البريد مسجّل بالفعل. جرّب تسجيل الدخول.';
-    if(m.includes('password') && m.includes('should')) return 'كلمة المرور قصيرة (٦ أحرف على الأقل).';
-    if(m.includes('password')) return 'كلمة المرور غير مقبولة (٦ أحرف على الأقل).';
+    if(m.includes('password') && m.includes('should')) return 'كلمة المرور قصيرة (٨ أحرف على الأقل).';
+    if(m.includes('password')) return 'كلمة المرور غير مقبولة (٨ أحرف على الأقل).';
     if(m.includes('email') && (m.includes('invalid') || m.includes('valid'))) return 'البريد الإلكتروني غير صالح.';
     return 'تعذّر إتمام العملية. حاول مرة أخرى.';
   }
@@ -543,10 +544,12 @@
       onSubmit: async (m, v)=>{
         AU.message('', '');
         if(m==='signup'){
+          const nm = (v.name||'').trim();
+          if(nm.length < 2 || nm.length > 60){ AU.message('أدخل اسمك (حرفان على الأقل).', 'error'); return; }
           if(!v.email){ AU.message('أدخل بريدك الإلكتروني.', 'error'); return; }
-          if((v.password||'').length < 6){ AU.message('كلمة المرور ٦ أحرف على الأقل.', 'error'); return; }
+          if((v.password||'').length < 8){ AU.message('كلمة المرور ٨ أحرف على الأقل.', 'error'); return; }
           AU.busy(true); AU.message('جارٍ إنشاء حسابك…', 'info');
-          const r = await doSignUp(v.email, v.password, v.name);
+          const r = await doSignUp(v.email, v.password, nm);
           if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'signup'), 'error'); return; }
           const hasSession = r && r.data && r.data.session;
           if(!hasSession){ // project requires email confirmation → no session yet
@@ -574,7 +577,7 @@
           if(r && r.error){ AU.message(authMessage(r.error,'forgot'), 'error'); return; }
           AU.message('إن كان لديك حساب بهذا البريد، فستصلك رسالة بها رابط لإعادة التعيين.', 'success');
         } else if(m==='reset'){
-          if((v.password||'').length < 6){ AU.message('كلمة المرور ٦ أحرف على الأقل.', 'error'); return; }
+          if((v.password||'').length < 8){ AU.message('كلمة المرور ٨ أحرف على الأقل.', 'error'); return; }
           AU.busy(true); AU.message('جارٍ الحفظ…', 'info');
           const r = await doReset(v.password);
           if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'reset'), 'error'); return; }
@@ -584,18 +587,29 @@
       },
       onClose: ()=>{ AU.close(); if(typeof o.onClose==='function') o.onClose(); },
       onOffline: async ()=>{ AU.close(); if(typeof o.onOffline==='function') await o.onOffline(); },
-      onHaveKey: ()=>{ AU.close(); if(typeof o.onHaveKey==='function') o.onHaveKey(); },
     });
     AU.open(mode||'signin', { dismissible: o.dismissible !== false, showEscapes: !!o.showEscapes });
   }
 
+  function displayNameOf(sess){ try{ const su = sess && sess.user; return (su && su.user_metadata && su.user_metadata.display_name) || ''; }catch(e){ return ''; } }
+  // Personalised greeting on Today — reuses the existing quote line (NO extra height, so the fixed FAB never
+  // floats over a task). Falls back to the email local-part for a legacy account without a stored name.
+  function updateGreeting(){
+    try{
+      if(!accountMode || !accountDisplayName) return;
+      const q = document.querySelector('.hero .quote');
+      if(q) q.textContent = 'أهلًا، ' + accountDisplayName;
+    }catch(e){}
+  }
   async function setupAccountUI(){
     const box = $('accountBox'); if(!box || !AC() || !sb) return;
     let sess=null; try{ sess = await AC().getSession(sb); }catch(e){}
     const uid = AC().userIdOf(sess);
     const email = (sess && sess.user && sess.user.email) || '';
+    const name = displayNameOf(sess) || (email ? email.split('@')[0] : '');
     if(uid){
-      box.innerHTML = `<div class="acct-row"><span class="acct-you">مسجّل الدخول${email?': '+escapeHtml(email):''}</span></div>
+      box.innerHTML = `<div class="acct-row"><span class="acct-you">${name?escapeHtml(name):'مسجّل الدخول'}</span></div>
+        ${email?`<p class="acct-hint" style="direction:ltr;text-align:start;margin-top:0;">${escapeHtml(email)}</p>`:''}
         <p class="acct-hint">بياناتك تُزامَن بأمان مع حسابك على كل أجهزتك.</p>
         <button class="btn ghost" id="acctSignOut">تسجيل الخروج</button>`;
       const so=$('acctSignOut'); if(so) so.addEventListener('click', doSignOut);
@@ -1852,7 +1866,7 @@
     }catch(e){ return '—'; }
   }
   function syncStateLabel(){
-    const m = { idle:'خامل', syncing:'يتزامن الآن', saved:'تمّت المزامنة', error:'خطأ مؤقت', offline:'غير متصل', 'need-key':'يحتاج مفتاح المزامنة' };
+    const m = { idle:'خامل', syncing:'يتزامن الآن', saved:'تمّت المزامنة', error:'خطأ مؤقت', offline:'غير متصل', 'need-key':'يحتاج تسجيل الدخول', 'need-auth':'يحتاج تسجيل الدخول' };
     return m[syncState] || syncState;
   }
   function relTime(ts){
@@ -1917,8 +1931,8 @@
       'تغييرات غير مرفوعة: ' + toArabicNum(outbox),
       'عناصر الاسترجاع: ' + toArabicNum(recovery),
       'الإشعارات: ' + (pushActive ? 'مفعّلة' : 'غير مفعّلة'),
-      'مفتاح المزامنة: ' + (getDeviceKey() ? 'مُدخل' : 'غير مُدخل'),
-      ...(keyDiag.rawLen ? ['تشخيص إدخال المفتاح: طول=' + toArabicNum(keyDiag.cleanLen) + (keyDiag.changed ? ' (أُزيلت أحرف خفية من ' + toArabicNum(keyDiag.rawLen) + ')' : '') + ' · الجلب: ' + keyDiag.pull] : []),
+      'الحساب: ' + (accountMode ? 'مسجّل الدخول' : 'غير مسجّل'),
+      ...(keyDiag.pull ? ['تشخيص الجلب: ' + keyDiag.pull] : []),
       'التخزين المحلي: ' + (storageDegraded ? 'محدود (بدون قاعدة بيانات)' : (store && store.newerSchema ? 'إصدار أحدث — يُنصح بتحديث التطبيق' : 'سليم')),
       'الوضع المحلي فقط: ' + (localOnly ? 'نعم' : 'لا'),
       'معرّف الجهاز: ' + (DEVICE_ID ? DEVICE_ID.slice(0,8) : '—'),
@@ -2270,7 +2284,7 @@
   }
 
   // ---------- wiring ----------
-  $('syncBadge').addEventListener('click', ()=>{ if(syncState==='need-key') promptForKey(); });
+  $('syncBadge').addEventListener('click', ()=>{ if(syncState==='need-key' || syncState==='need-auth') openAuth('signin', { dismissible:true }); });
   $('prevDay').addEventListener('click', ()=>{ selectedDate = new Date(selectedDate); selectedDate.setDate(selectedDate.getDate()-1); render(); });
   $('nextDay').addEventListener('click', ()=>{ selectedDate = new Date(selectedDate); selectedDate.setDate(selectedDate.getDate()+1); render(); });
 
@@ -2294,7 +2308,6 @@
 
   $('clearDayBtn').addEventListener('click', clearWholeDay);
   $('restoreDayBtn').addEventListener('click', restoreDayToTemplate);
-  $('enterKeyBtn').addEventListener('click', ()=>{ promptForKey(); updateSyncKeyInfo(); });
 
   $('openSettings').addEventListener('click', openSettings);
   $('closeSettings').addEventListener('click', closeSettings);
@@ -2646,25 +2659,30 @@
         });
       }
       const json = sub.toJSON();
-      // Register through the device-key-protected RPC (register_push): a real upsert on the endpoint,
-      // no direct table access from the browser. Needs the sync key — the same one used for data sync.
-      const key = getDeviceKey();
-      if(!key){
-        alert('لتفعيل الإشعارات أدخل مفتاح المزامنة أولًا (من إعدادات المزامنة).');
-        promptForKey();
-        return;
-      }
+      // Account users register through the authenticated RPC (register_push_v2, identity from the session —
+      // no key). A signed-out web user is asked to create an account (the device-key concept is retired).
       let saved = false, unauthorized = false;
       if(sb){
         try{
-          const { data, error } = await withTimeout(sb.rpc('register_push', {
-            p_key: key, p_endpoint: json.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth,
-          }), SYNC_TIMEOUT_MS);
+          let data, error;
+          if(accountMode){
+            ({ data, error } = await withTimeout(sb.rpc('register_push_v2', {
+              p_endpoint: json.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth }), SYNC_TIMEOUT_MS));
+          } else {
+            const key = getDeviceKey();
+            if(!key){ openAuth('signin', { dismissible:true }); if(globalThis.AyyamAuthUI) AyyamAuthUI.message('أنشئ حسابًا أو سجّل الدخول لتفعيل الإشعارات.', 'info'); return; }
+            ({ data, error } = await withTimeout(sb.rpc('register_push', {
+              p_key: key, p_endpoint: json.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth }), SYNC_TIMEOUT_MS));
+          }
           if(!error && data && data.status === 'ok') saved = true;
           else if(data && data.status === 'unauthorized') unauthorized = true;
         }catch(e){ saved = false; }
       }
-      if(unauthorized){ alert('مفتاح المزامنة غير صحيح. أعد إدخاله ثم فعّل الإشعارات.'); setDeviceKey(''); promptForKey(); return; }
+      if(unauthorized){
+        if(accountMode){ alert('انتهت جلستك. سجّل الدخول مرة أخرى ثم فعّل الإشعارات.'); }
+        else { openAuth('signin', { dismissible:true }); }
+        return;
+      }
       if(!saved){
         alert('تعذّر تسجيل الإشعارات على الخادم. تأكد من الاتصال وحاول مرة أخرى.');
         return;
@@ -2740,6 +2758,14 @@
     try{
       const pull = await backend.pull();
       if(pull.status === 'unauthorized'){ if(accountMode){ sessionExpired=true; return 'need-auth'; } keyDiag.pull='unauthorized'; setDeviceKey(''); return 'need-key'; }
+      // Account backend reachable but its schema/RPCs aren't deployed here (e.g. the app points at a backend
+      // without the P1→P8 migrations). Honest, safe message — never a generic "check your connection".
+      if(pull.status === 'error'){
+        keyDiag.pull = 'v2-'+(pull.reason||'error');   // safe: a reason code, never a token
+        if(accountMode && pull.reason === 'schema_missing') return 'backend-missing';
+        if(accountMode && pull.reason === 'unauthorized'){ sessionExpired=true; return 'need-auth'; }
+        return 'unreachable';
+      }
       keyDiag.pull = 'ready';
       if(pull.exists){
         const serverEn = M.toEnriched(pull.data, 1);
@@ -2759,18 +2785,19 @@
     const el = $('startupState'); if(!el) return;
     el.classList.remove('hidden');
     const msg=$('startupMsg'), icon=$('startupIcon');
-    const retry=$('startupRetry'), keyBtn=$('startupKey'), off=$('startupOffline');
-    [retry,keyBtn,off].forEach(b=>b.classList.add('hidden'));
-    if(kind==='need-key'){
-      icon.textContent='🔑';
-      msg.textContent='لعرض بياناتك ومزامنتها بين أجهزتك، أدخل مفتاح المزامنة على هذا الجهاز.';
-      keyBtn.classList.remove('hidden');
-      off.classList.remove('hidden');
+    const retry=$('startupRetry'), off=$('startupOffline');
+    [retry,off].forEach(b=>{ if(b) b.classList.add('hidden'); });
+    if(kind==='backend-missing'){
+      // Account schema/RPCs not deployed on this backend yet (safe, accurate — no token/secret surfaced).
+      icon.textContent='🛠️';
+      msg.textContent='خدمة الحسابات غير مهيأة على الخادم بعد. يمكنك المتابعة دون حساب الآن، والمزامنة لاحقًا.';
+      if(retry) retry.classList.remove('hidden');
+      if(off) off.classList.remove('hidden');
     } else { // load-failed
       icon.textContent='☁️';
       msg.textContent='تعذّر تحميل بياناتك من السحابة. تحقّق من الاتصال وأعد المحاولة.';
-      retry.classList.remove('hidden');
-      off.classList.remove('hidden');
+      if(retry) retry.classList.remove('hidden');
+      if(off) off.classList.remove('hidden');
     }
   }
   // Continue as a local-only device (baseline-stamped, so a later reconnect merges rather than overwrites).
@@ -2798,22 +2825,15 @@
       openAuth('signin', { dismissible:false, reloadOnSuccess:true, onOffline: continueOffline });
     }
     else if(r==='need-key'){
-      // A signed-out device with no local data. New users must NEVER see the sync-key concept: present the
-      // premium account gate. Escapes: continue offline, or (tucked away) restore an existing legacy key.
+      // A signed-out device with no local data → the premium account gate. The device-key concept is fully
+      // retired from the public UI; the only escape is "continue offline".
       if(loadingEl) loadingEl.classList.add('hidden');
-      openAuth('signup', { dismissible:false, showEscapes:true,
-        onOffline: continueOffline,
-        onHaveKey: ()=>{ needsKey=true; syncState='need-key'; updateSyncBadge(); showStartupState('need-key'); } });
+      openAuth('signup', { dismissible:false, showEscapes:true, onOffline: continueOffline });
     }
+    else if(r==='backend-missing'){ if(loadingEl) loadingEl.classList.add('hidden'); showStartupState('backend-missing'); } // account schema not deployed
     else { showStartupState('load-failed'); } // unreachable
   }
   $('startupRetry').addEventListener('click', ()=>{ if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad(); });
-  $('startupKey').addEventListener('click', ()=>{
-    const k = window.prompt('مفتاح المزامنة (يُدخل مرة واحدة على هذا الجهاز):','');
-    if(k===null) return;
-    if(!submitDeviceKey(k)) return;
-    if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad();
-  });
   $('startupOffline').addEventListener('click', continueOffline);
 
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
@@ -2851,7 +2871,7 @@
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
   authReady = true;   // from now on, real auth transitions (sign-in/out/switch) trigger a controlled reload
   try{ setupAccountUI(); }catch(e){}
-  if(accountMode){ track('app_open'); checkAdmin(); checkOnboarding(); } // P4 analytics + admin reveal + P5 onboarding
+  if(accountMode){ track('app_open'); checkAdmin(); checkOnboarding(); updateGreeting(); } // P4 analytics + admin reveal + P5 onboarding + greeting
   // Settings → "إعادة الجولة التعريفية" (account users; the tour is client-side, completion stays server-side).
   if(accountMode && globalThis.AyyamOnboarding){
     const oe = $('onbEntry');
@@ -2861,7 +2881,6 @@
   // P8 settings meta: app version, hide the legacy sync-key card for account users (never expose it), native update check.
   try{
     const av = $('appVersionInfo'); if(av) av.textContent = 'أيام · الإصدار ' + APP_VERSION + (NATIVE ? ' — أندرويد' : ' — ويب');
-    if(accountMode){ const sk = $('syncKeyCard'); if(sk) sk.classList.add('hidden'); }
     if(NATIVE){ const ur=$('appUpdateRow'); if(ur) ur.classList.remove('hidden');
       const cb=$('checkUpdateBtn'); if(cb) cb.addEventListener('click', ()=>{ try{ checkNativeUpdate(); }catch(e){} }); }
   }catch(e){}

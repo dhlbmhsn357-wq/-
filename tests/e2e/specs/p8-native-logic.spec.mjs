@@ -27,8 +27,9 @@ test('onboarding Back: steps back through the tour, then exits at the first step
   await prepare(page, { key: false, now: '2026-09-28T09:00:00' });
   await page.goto('/');
   await expect(page.locator('#authView')).toBeVisible({ timeout: 15000 });
+  await page.locator('#authName').fill('مستخدم أيام');
   await page.locator('#authEmail').fill('back@t.test');
-  await page.locator('#authPass').fill('pass123');
+  await page.locator('#authPass').fill('pass1234');
   await page.locator('#authSubmit').click();                                 // sign up → onboarding tour
   await expect(page.locator('#onbView')).toBeVisible({ timeout: 25000 });
   await page.locator('#onbNext').click();                                    // → step 2

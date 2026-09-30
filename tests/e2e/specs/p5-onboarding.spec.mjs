@@ -9,8 +9,9 @@ async function signupToTour(page, email) {
   await prepare(page, { key: false, now: '2026-09-28T09:00:00' });
   await page.goto('/');
   await expect(page.locator('#authView')).toBeVisible({ timeout: 15000 });
+  await page.locator('#authName').fill('مستخدم أيام');
   await page.locator('#authEmail').fill(email);
-  await page.locator('#authPass').fill('pass123');
+  await page.locator('#authPass').fill('pass1234');
   await page.locator('#authSubmit').click();
   await expect(page.locator('#onbView')).toBeVisible({ timeout: 25000 });   // the P5 tour starts automatically
 }

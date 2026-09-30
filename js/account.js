@@ -19,14 +19,33 @@
   // never expose another account's cache/outbox/recovery/diag. The legacy pre-auth DB stays 'ayyam'.
   function dbNameFor(uid) { return (typeof uid === 'string' && uid) ? ('ayyam::u:' + uid) : LEGACY_DB; }
 
+  // Classify a Supabase/PostgREST RPC error into a SAFE reason (never contains tokens/passwords). Used so the
+  // app can tell "the account schema/RPCs aren't deployed on this backend" apart from a network failure, an
+  // expired session, or RLS — for honest, non-leaking diagnostics.
+  function classifyRpcError(error) {
+    if (!error) return null;
+    var code = String(error.code || ''); var msg = String(error.message || '').toLowerCase();
+    if (code === 'PGRST202' || code === 'PGRST205' || code === '42883' || code === '42P01' ||
+        msg.indexOf('could not find the function') >= 0 || msg.indexOf('does not exist') >= 0 ||
+        msg.indexOf('schema cache') >= 0 || msg.indexOf('not find the table') >= 0) return 'schema_missing';
+    if (code === '401' || code === 'PGRST301' || msg.indexOf('jwt') >= 0 || msg.indexOf('not authenticated') >= 0 || msg.indexOf('unauthorized') >= 0) return 'unauthorized';
+    if (code === '42501' || msg.indexOf('permission denied') >= 0) return 'forbidden';
+    if (msg.indexOf('failed to fetch') >= 0 || msg.indexOf('network') >= 0 || msg.indexOf('timeout') >= 0) return 'network';
+    return 'error';
+  }
+  async function rpcRes(sb, fn, args) { try { var r = await sb.rpc(fn, args || {}); return r || { data: null, error: { message: 'no response' } }; } catch (e) { return { data: null, error: e }; } }
+
   // ---- sync backends: same shape { pull, commit }, chosen by session ----
   // v2 (authenticated): identity comes from the JWT the supabase client already attached; NO device key.
   function v2Backend(sb) {
     return {
       mode: 'account',
-      pull: async () => (await sb.rpc('ayyam_pull_v2', {})).data,
-      commit: async (expected, data, opId, reason) =>
-        (await sb.rpc('ayyam_commit_v2', { p_expected_revision: expected, p_data: data, p_op_id: opId, p_reason: reason })).data,
+      pull: async () => { var r = await rpcRes(sb, 'ayyam_pull_v2', {}); if (r.error) return { status: 'error', reason: classifyRpcError(r.error) }; return r.data; },
+      commit: async (expected, data, opId, reason) => {
+        var r = await rpcRes(sb, 'ayyam_commit_v2', { p_expected_revision: expected, p_data: data, p_op_id: opId, p_reason: reason });
+        if (r.error) return { status: 'error', reason: classifyRpcError(r.error) };
+        return r.data;
+      },
       claim: async (deviceKey) => (await sb.rpc('ayyam_claim', { p_key: deviceKey })).data,
       begin: async () => (await sb.rpc('ayyam_migration_begin_v2', {})).data,
       complete: async () => (await sb.rpc('ayyam_migration_complete_v2', {})).data,
@@ -135,5 +154,6 @@
     LEGACY_DB, dbNameFor,
     v2Backend, legacyBackend, migrate,
     getSession, userIdOf, signUp, signIn, signOut, resetPassword, updatePassword, setSessionFromUrl, onAuthChange,
+    classifyRpcError,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

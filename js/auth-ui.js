@@ -18,8 +18,8 @@
     if (m === 'signup') {
       return '<h1 class="auth-title">أنشئ حسابك في أيام</h1>'
         + '<p class="auth-sub">' + VALUE_PROP + '</p>'
-        + email + pass('new-password', 'كلمة المرور (٦ أحرف على الأقل)')
-        + '<input id="authName" class="auth-input" type="text" autocomplete="name" placeholder="الاسم (اختياري)" />'
+        + '<input id="authName" class="auth-input" type="text" autocomplete="name" placeholder="الاسم" />'
+        + email + pass('new-password', 'كلمة المرور (٨ أحرف على الأقل)')
         + '<button class="btn primary auth-submit" id="authSubmit">إنشاء الحساب</button>'
         + '<div id="authMsg" class="auth-msg" role="status" aria-live="polite"></div>'
         + '<p class="auth-switch">لديك حساب بالفعل؟ <button type="button" class="auth-link" id="authSwitch">تسجيل الدخول</button></p>';
@@ -59,13 +59,12 @@
   function render() {
     var view = $('authView'); if (!view) return;
     var closable = mode !== 'migrating' && (opts.dismissible !== false);
-    // Escapes are offered ONLY on the first-run gate (a fresh install), never mid-session, and never surface
-    // the device-key concept to a genuinely new user — the key link is tucked away for returning legacy users.
+    // The only first-run escape is "continue without an account". The device-key / sync-key concept is fully
+    // retired from the public UI (it is used internally for legacy migration only, read from device storage).
     var escapes = '';
     if (opts.showEscapes && mode !== 'migrating' && mode !== 'reset') {
       escapes = '<div class="auth-escapes">'
         + '<button type="button" class="auth-escape" id="authOffline">المتابعة بدون حساب الآن</button>'
-        + '<button type="button" class="auth-escape auth-escape-dim" id="authHaveKey">لديّ مفتاح مزامنة</button>'
         + '</div>';
     }
     view.innerHTML =
@@ -101,7 +100,6 @@
     var fg = $('authForgot'); if (fg) fg.addEventListener('click', function () { setMode('forgot'); });
     var cl = $('authClose'); if (cl) cl.addEventListener('click', function () { if (typeof handlers.onClose === 'function') handlers.onClose(); });
     var off = $('authOffline'); if (off) off.addEventListener('click', function () { if (typeof handlers.onOffline === 'function') handlers.onOffline(); });
-    var hk = $('authHaveKey'); if (hk) hk.addEventListener('click', function () { if (typeof handlers.onHaveKey === 'function') handlers.onHaveKey(); });
     var rt = $('authMigrateRetry'); if (rt) rt.addEventListener('click', function () { if (typeof handlers.onMigrateRetry === 'function') handlers.onMigrateRetry(); });
   }
 

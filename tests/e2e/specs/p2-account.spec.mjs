@@ -11,6 +11,7 @@ async function signUp(page, email, password) {
   await expect(page.locator('#authView')).toBeVisible();
   await page.locator('#authSwitch').click();                   // signin → signup
   await expect(page.locator('#authName')).toBeVisible();
+  await page.locator('#authName').fill('مالك أيام');           // name is required
   await page.locator('#authEmail').fill(email);
   await page.locator('#authPass').fill(password);
   await page.locator('#authSubmit').click();
@@ -24,7 +25,7 @@ test('signup migrates the legacy device data into the new account (nothing lost)
   await addTask(page, 'مهمة-قبل-الحساب');       // distinctive legacy data on this device
   await waitSynced(page);                          // it reaches the legacy 'main' row
 
-  await signUp(page, 'owner@t.test', 'pass123');
+  await signUp(page, 'owner@t.test', 'pass1234');
   // signup → migration (claim 'main' + merge local) → controlled reload into the account DB.
   await expect(page.locator('.task-title', { hasText: 'مهمة-قبل-الحساب' })).toBeVisible({ timeout: 25000 });
   // now in account mode: settings shows signed-in, and an edit syncs via the v2 path
@@ -41,7 +42,7 @@ test('sign out returns to the legacy device (data retained, not deleted)', async
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
   await waitSynced(page);
-  await signUp(page, 'owner2@t.test', 'pass123');
+  await signUp(page, 'owner2@t.test', 'pass1234');
   await page.locator('#openSettings').click();
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 25000 });
   await page.locator('#acctSignOut').click();
@@ -56,7 +57,7 @@ test('two accounts on the same device are isolated: B never sees A private data'
   await prepare(page, { key: true, now: '2026-09-28T09:00:00' });
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
-  await signUp(page, 'a@t.test', 'passA1');
+  await signUp(page, 'a@t.test', 'passA1yy');
   await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 });
   await addTask(page, 'سرّ-حساب-أ');              // A-only data (lives in A's account)
   await waitSynced(page);
@@ -66,7 +67,7 @@ test('two accounts on the same device are isolated: B never sees A private data'
   await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 }); // reloaded into legacy
   // sign up B on the same device (re-open settings after the reload). B is a fresh, empty account (the legacy
   // 'main' was already claimed by A), so it lands on the empty state — not A's data, and nothing auto-added.
-  await signUp(page, 'b@t.test', 'passB1');
+  await signUp(page, 'b@t.test', 'passB1yy');
   await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });
   // B must NOT see A's private task
   await expect(page.locator('.task-title', { hasText: 'سرّ-حساب-أ' })).toHaveCount(0);

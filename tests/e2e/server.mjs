@@ -206,19 +206,20 @@ const server = http.createServer(async (req, res) => {
 
   // ---- mock GoTrue auth (E2E only): create/lookup auth.users, issue a session whose token IS the uid ----
   if (p === '/__auth/signup' && req.method === 'POST') {
-    const { email, password } = JSON.parse(await readBody(req) || '{}');
-    if (!email || !password || password.length < 6) return send(res, 200, { error: { message: 'invalid email or password' } });
+    const { email, password, data } = JSON.parse(await readBody(req) || '{}');
+    if (!email || !password || password.length < 8) return send(res, 200, { error: { message: 'password should be at least 8 characters' } });
     if (authUsers.has(email)) return send(res, 200, { error: { message: 'already registered' } });
     const id = randomUUID();
-    authUsers.set(email, { id, password });
+    const display_name = (data && data.display_name) || null;
+    authUsers.set(email, { id, password, display_name });
     await tx(async () => { await db.query('insert into auth.users (id, email) values ($1,$2) on conflict do nothing', [id, email]); });
-    return send(res, 200, { session: { access_token: id, user: { id, email } } });
+    return send(res, 200, { session: { access_token: id, user: { id, email, user_metadata: { display_name } } } });
   }
   if (p === '/__auth/signin' && req.method === 'POST') {
     const { email, password } = JSON.parse(await readBody(req) || '{}');
     const u = authUsers.get(email);
     if (!u || u.password !== password) return send(res, 200, { error: { message: 'invalid login credentials' } });
-    return send(res, 200, { session: { access_token: u.id, user: { id: u.id, email } } });
+    return send(res, 200, { session: { access_token: u.id, user: { id: u.id, email, user_metadata: { display_name: u.display_name || null } } } });
   }
   // Password reset: request-email is always a 200 (no account enumeration); update sets a new password for
   // the recovery-session user (token = uid).
