@@ -47,10 +47,10 @@ test.describe('design system', () => {
     expect(fast).toBe('1ms');
   });
 
-  test('the app itself loads the design-system stylesheets', async ({ page }) => {
-    await page.goto('/');
-    const hrefs = await page.evaluate(() => Array.from(document.styleSheets).map((s) => s.href || ''));
-    expect(hrefs.some((h) => h.includes('tokens.css'))).toBeTruthy();
-    expect(hrefs.some((h) => h.includes('components.css'))).toBeTruthy();
+  test('the app itself loads the design-system stylesheets', async ({ request }) => {
+    // Assert on the served HTML (deterministic — the app boot may navigate/reload, which races a page.evaluate).
+    const html = await (await request.get('/')).text();
+    expect(html).toContain('css/tokens.css');
+    expect(html).toContain('css/components.css');
   });
 });
