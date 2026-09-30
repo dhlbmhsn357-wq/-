@@ -19,7 +19,7 @@ const html = readFileSync('index.html', 'utf8');
 const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
 if (inline.length) { console.error(`FAIL index.html: ${inline.length} inline <script> block(s) present — CSP requires external scripts only`); failed++; }
 check('sw.js', readFileSync('sw.js', 'utf8'));
-for (const f of ['js/app.js','js/storage.js','js/sync-model.js','js/time-model.js','js/routines-model.js','js/analytics-model.js','js/overdue-model.js','js/update-model.js','native-web/native.js','native-web/widget-model.js','native-web/notif-plan.js']) check(f, readFileSync(f, 'utf8'));
+for (const f of ['js/app.js','js/storage.js','js/sync-model.js','js/account.js','js/time-model.js','js/routines-model.js','js/analytics-model.js','js/overdue-model.js','js/update-model.js','native-web/native.js','native-web/widget-model.js','native-web/notif-plan.js']) check(f, readFileSync(f, 'utf8'));
 JSON.parse(readFileSync('manifest.webmanifest', 'utf8')); console.log('ok   manifest.webmanifest');
 
 process.exit(failed ? 1 : 0);

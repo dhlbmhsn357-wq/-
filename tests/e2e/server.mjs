@@ -10,6 +10,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { readdirSync } from 'node:fs';
 import * as adhan from 'adhan';
 import { runCron, runTest } from '../../supabase/functions/ayyam-reminders/orchestrate.js';
+import { randomUUID } from 'node:crypto';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DEVICE_KEY = 'e2e-device-key-0123456789abcdef';
@@ -51,8 +52,20 @@ const RPC = {
   ayyam_list_snapshots: ['p_key'],
   ayyam_restore: ['p_key', 'p_snapshot_id', 'p_expected_revision', 'p_op_id'],
   register_push: ['p_key', 'p_endpoint', 'p_p256dh', 'p_auth'],
+  // P2 authenticated (v2) RPCs — identity comes from the JWT (token), not a param.
+  ayyam_pull_v2: [],
+  ayyam_commit_v2: ['p_expected_revision', 'p_data', 'p_op_id', 'p_reason'],
+  ayyam_list_snapshots_v2: [],
+  ayyam_restore_v2: ['p_snapshot_id', 'p_expected_revision', 'p_op_id'],
+  register_push_v2: ['p_endpoint', 'p_p256dh', 'p_auth'],
+  ayyam_account_state_v2: [],
+  ayyam_migration_begin_v2: [],
+  ayyam_migration_complete_v2: [],
+  ayyam_claim: ['p_key'],
+  ayyam_freeze_legacy: ['p_key'],
 };
 const JSON_ARG = new Set(['p_data']);
+const authUsers = new Map();  // email → { id, password } (mock GoTrue)
 
 let outage = null;      // null | 'down' (503) | 'hang'
 let swVersion = null;   // when set, sw.js is served with SW_VERSION overridden (to test updates)
@@ -76,16 +89,19 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml' };
 
-async function callRpc(fn, args) {
+async function callRpc(fn, args, token) {
   const order = RPC[fn];
   if (!order) return { error: { message: 'not allowed' } };
   const params = order.map((k) => (JSON_ARG.has(k) ? JSON.stringify(args[k]) : args[k]));
   const casts = order.map((k, i) => `$${i + 1}${JSON_ARG.has(k) ? '::jsonb' : (k.includes('revision') || k.includes('snapshot') ? '::bigint' : (k.includes('op_id') ? '::uuid' : ''))}`);
+  // A token (mock JWT = the user's uid) runs the call as the `authenticated` role with auth.uid()=token,
+  // exactly as PostgREST does for a signed-in supabase-js client. No token → the legacy `anon` path.
   return tx(async () => {
-    await db.exec('set role anon');
+    if (token) { await db.query("select set_config('request.jwt.claims', $1, false)", [JSON.stringify({ sub: token, role: 'authenticated' })]); await db.exec('set role authenticated'); }
+    else { await db.exec('set role anon'); }
     try { const r = await db.query(`select public.${fn}(${casts.join(',')}) as d`, params); return { data: r.rows[0].d }; }
     catch (e) { return { error: { message: String(e.message || e) } }; }
-    finally { await db.exec('reset role'); }
+    finally { await db.exec('reset role'); if (token) await db.query("select set_config('request.jwt.claims', '', false)"); }
   });
 }
 
@@ -132,8 +148,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, '');
 
   // ---- control endpoints (tests only) ----
-  if (p === '/__ctl/reset') { failEndpoints = new Set(); sentPushes.length = 0; outage = null;
-    return tx(async () => { await db.exec(`truncate public.ayyam_data, public.ayyam_snapshots, public.ayyam_ops, public.push_subscriptions, public.push_reminders, public.push_deliveries restart identity cascade;`);
+  if (p === '/__ctl/reset') { failEndpoints = new Set(); sentPushes.length = 0; outage = null; authUsers.clear();
+    return tx(async () => {
+      await db.exec(`truncate public.ayyam_data, public.ayyam_snapshots, public.ayyam_ops, public.push_subscriptions, public.push_reminders, public.push_deliveries restart identity cascade;`);
+      // P1/P2 account state (best-effort — present only after those migrations): reset for test isolation.
+      await db.exec(`truncate public.profiles, public.user_roles, public.user_account_state cascade;`).catch(() => {});
+      await db.exec(`delete from auth.users;`).catch(() => {});
+      await db.exec(`update public.ayyam_legacy_claim set claimed_by=null, claimed_at=null, frozen=false, frozen_at=null where row_id='main';`).catch(() => {});
       send(res, 200, { ok: true }); }); }
   if (p === '/__ctl/outage') { outage = url.searchParams.get('mode') || null; return send(res, 200, { outage }); }
   if (p === '/__ctl/sw-version') { swVersion = url.searchParams.get('v') || null; swBreak = url.searchParams.get('break') === '1'; return send(res, 200, { swVersion, swBreak }); }
@@ -161,11 +182,28 @@ const server = http.createServer(async (req, res) => {
   if (p === '/rpc' && req.method === 'POST') {
     if (outage === 'down') return send(res, 503, { error: 'unreachable' });
     if (outage === 'hang') return; // never responds → client timeout
-    const { fn, args } = JSON.parse(await readBody(req) || '{}');
-    return send(res, 200, await callRpc(fn, args || {}));
+    const { fn, args, token } = JSON.parse(await readBody(req) || '{}');
+    return send(res, 200, await callRpc(fn, args || {}, token));
   }
   // ---- direct table access is NOT exposed (security): always denied ----
   if (p === '/rest' && req.method === 'POST') return send(res, 403, { error: 'direct table access denied' });
+
+  // ---- mock GoTrue auth (E2E only): create/lookup auth.users, issue a session whose token IS the uid ----
+  if (p === '/__auth/signup' && req.method === 'POST') {
+    const { email, password } = JSON.parse(await readBody(req) || '{}');
+    if (!email || !password || password.length < 6) return send(res, 200, { error: { message: 'invalid email or password' } });
+    if (authUsers.has(email)) return send(res, 200, { error: { message: 'already registered' } });
+    const id = randomUUID();
+    authUsers.set(email, { id, password });
+    await tx(async () => { await db.query('insert into auth.users (id, email) values ($1,$2) on conflict do nothing', [id, email]); });
+    return send(res, 200, { session: { access_token: id, user: { id, email } } });
+  }
+  if (p === '/__auth/signin' && req.method === 'POST') {
+    const { email, password } = JSON.parse(await readBody(req) || '{}');
+    const u = authUsers.get(email);
+    if (!u || u.password !== password) return send(res, 200, { error: { message: 'invalid login credentials' } });
+    return send(res, 200, { session: { access_token: u.id, user: { id: u.id, email } } });
+  }
 
   // ---- the browser-side Supabase mock ----
   if (p === '/mock-supabase.js') return send(res, 200, readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'mock-supabase.js')), MIME['.js']);

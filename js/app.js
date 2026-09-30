@@ -212,7 +212,7 @@
   async function initStorage(){
     try{
       if(!(typeof AyyamStore !== 'undefined' && AyyamStore.available() && M)) throw new Error('no idb/model');
-      store = await AyyamStore.open();
+      store = await AyyamStore.open(accountMode ? AC().dbNameFor(accountUid) : undefined);
       await store.migrateFromLocalStorage(k=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } }, sanitizeBundle);
       const stateRaw = await store.getState();
       const baseRaw = await store.getBase();
@@ -412,6 +412,121 @@
     return data;
   }
 
+  // ---------- account / session (P2) ----------
+  // accountMode=false → the shipped legacy path (device key, id='main', ayyam_pull/commit) UNCHANGED.
+  // accountMode=true  → an authenticated session syncs its OWN per-user row via the authenticated *_v2 RPCs.
+  const AC = () => globalThis.AyyamAccount;
+  let accountMode = false, accountUid = null, sessionExpired = false;
+  const LS_MIG_OP = 'ayyam_migration_opid_v1';   // stable op id → resume-safe migration commit
+  function resolveSyncBackend(){
+    if(!AC() || !sb) return null;
+    if(accountMode) return AC().v2Backend(sb);
+    const key = getDeviceKey();
+    return key ? AC().legacyBackend(sb, key) : null;   // legacy needs the device key
+  }
+  // A sync got 'unauthorized': in account mode the JWT expired (re-auth, stay usable offline); in legacy
+  // mode the device key was wrong (re-prompt). Never deletes local data.
+  function handleAuthReject(){
+    if(accountMode){ sessionExpired = true; syncState = 'need-auth'; }
+    else { needsKey = true; syncState = 'need-key'; setDeviceKey(''); }
+  }
+  function migrationOpId(){
+    try{ let v = localStorage.getItem(LS_MIG_OP); if(!v){ v = newId(); localStorage.setItem(LS_MIG_OP, v); } return v; }
+    catch(e){ return newId(); }
+  }
+  // Migrate this legacy install's data into the signed-in account, ONCE. Recovery snapshot → claim (if a
+  // device key exists) → deterministic merge with local+pending → CAS commit → verify → mark complete.
+  // Idempotent/resumable (stable op id). Returns { status }.
+  async function runAccountMigration(){
+    if(!(accountMode && AC() && sb && M)) return { status:'unavailable' };
+    const backend = AC().v2Backend(sb);
+    const key = getDeviceKey();
+    if(store){ try{ await store.saveRecovery({ reason:'pre-account-migration', data: M.materialize(enriched) }); }catch(e){} }
+    const opId = migrationOpId();
+    try{
+      if(key){
+        return await AC().migrate(backend, { localEnriched: enriched, migrationOpId: opId, now: Date.now(), deviceKey: key });
+      }
+      // keyless local-only install: nothing to claim — adopt local data into the fresh account row.
+      await backend.begin();
+      const p = await backend.pull();
+      const acctEn = p && p.exists ? M.toEnriched(p.data, 1) : M.empty(0);
+      const merged = M.pruneTombstones(M.merge(M.empty(0), enriched, acctEn).merged, Date.now());
+      const c = await backend.commit(p && p.exists ? p.revision : 0, merged, opId, 'import');
+      if(c && (c.status==='ok' || c.status==='duplicate')){ await backend.complete(); return { status:'ok' }; }
+      return { status:(c && c.status) || 'error' };
+    }catch(e){ return { status:'error', message:String(e && e.message || e) }; }
+  }
+  // Auth transitions switch the DB context, so we do it with a controlled reload (a fresh boot opens the
+  // right per-user DB and pulls that account's data). Sign-in from legacy runs the one-time migration first;
+  // sign-out/switch flushes the outbox first. The initial replay event is ignored (boot already handled it).
+  let authReady = false, authBusy = false;
+  async function onAuthChanged(session){
+    if(!authReady || authBusy) return;
+    const newUid = AC() ? AC().userIdOf(session) : null;
+    if(newUid === accountUid) return;   // token refresh / no context change
+    authBusy = true;
+    try{
+      if(newUid && !accountMode){
+        accountMode = true; accountUid = newUid;         // target the account for migration + v2 sync
+        try{ await runAccountMigration(); }catch(e){}    // idempotent; reload pulls the account data either way
+      } else {
+        try{ if(navigator.onLine!==false && isPending()) await syncNow('sync'); }catch(e){} // flush before switching
+      }
+    }finally{ try{ location.reload(); }catch(e){} }
+  }
+  // Minimal auth actions (wired to the Settings "الحساب" section).
+  async function doSignIn(email, password){
+    if(!(AC() && sb)) return { error:{ message:'unavailable' } };
+    const r = await AC().signIn(sb, email, password);
+    return r;
+  }
+  async function doSignUp(email, password, name){
+    if(!(AC() && sb)) return { error:{ message:'unavailable' } };
+    return AC().signUp(sb, email, password, name);
+  }
+  async function doSignOut(){
+    if(!(AC() && sb)) return;
+    if(isPending() && navigator.onLine!==false){ try{ await syncNow('sync'); }catch(e){} }
+    if(isPending() && !confirm('لديك تغييرات لم تتم مزامنتها بعد. تسجيل الخروج لن يحذفها، وستُرفع عند دخولك مرة أخرى. متابعة؟')) return;
+    try{ if(NATIVE) await AyyamNative.updateWidgetSnapshot(null); }catch(e){} // clear the widget snapshot on sign-out
+    await AC().signOut(sb);
+    // onAuthChanged(null) will flush + reload into the legacy DB.
+  }
+  function authErr(e){
+    const m = String((e && e.message)||'').toLowerCase();
+    if(m.includes('invalid') || m.includes('credential')) return 'بيانات الدخول غير صحيحة.';
+    if(m.includes('registered') || m.includes('exists') || m.includes('already')) return 'هذا البريد مسجّل بالفعل. جرّب الدخول.';
+    if(m.includes('password')) return 'كلمة المرور غير مقبولة (٦ أحرف على الأقل).';
+    if(m.includes('email')) return 'البريد الإلكتروني غير صالح.';
+    return 'تعذّر إتمام العملية. حاول مرة أخرى.';
+  }
+  async function setupAccountUI(){
+    const box = $('accountBox'); if(!box || !AC() || !sb) return;
+    let sess=null; try{ sess = await AC().getSession(sb); }catch(e){}
+    const uid = AC().userIdOf(sess);
+    const email = (sess && sess.user && sess.user.email) || '';
+    if(uid){
+      box.innerHTML = `<div class="acct-row"><span class="acct-you">مسجّل الدخول${email?': '+escapeHtml(email):''}</span></div>
+        <p class="acct-hint">بياناتك تُزامَن بأمان مع حسابك على كل أجهزتك.</p>
+        <button class="btn ghost" id="acctSignOut">تسجيل الخروج</button>`;
+      const so=$('acctSignOut'); if(so) so.addEventListener('click', doSignOut);
+    } else {
+      box.innerHTML = `<p class="acct-hint">أنشئ حسابًا لمزامنة بياناتك بأمان بين أجهزتك — بدون أي مفتاح.</p>
+        <input id="acctEmail" class="acct-input" type="email" inputmode="email" autocomplete="email" placeholder="البريد الإلكتروني" />
+        <input id="acctPass" class="acct-input" type="password" autocomplete="current-password" placeholder="كلمة المرور" />
+        <input id="acctName" class="acct-input" type="text" placeholder="الاسم (اختياري)" />
+        <div class="acct-actions"><button class="btn primary" id="acctSignIn">دخول</button>
+          <button class="btn" id="acctSignUp">إنشاء حساب</button></div>
+        <div id="acctMsg" class="acct-msg"></div>`;
+      const setMsg=(t)=>{ const m=$('acctMsg'); if(m) m.textContent=t; };
+      const busy=(b)=>{ ['acctSignIn','acctSignUp'].forEach(id=>{ const el=$(id); if(el) el.disabled=b; }); };
+      const em=()=> ($('acctEmail').value||'').trim(), pw=()=> $('acctPass').value||'', nm=()=> ($('acctName').value||'').trim();
+      $('acctSignIn').addEventListener('click', async ()=>{ busy(true); setMsg('جارٍ الدخول…'); const r=await doSignIn(em(),pw()); if(r && r.error){ setMsg(authErr(r.error)); busy(false); } });
+      $('acctSignUp').addEventListener('click', async ()=>{ if(pw().length<6){ setMsg('كلمة المرور ٦ أحرف على الأقل.'); return; } busy(true); setMsg('جارٍ إنشاء الحساب…'); const r=await doSignUp(em(),pw(),nm()); if(r && r.error){ setMsg(authErr(r.error)); busy(false); } });
+    }
+  }
+
   const MAX_ATTEMPTS = 6;
   const backoff = a => Math.min(1000 * Math.pow(2, a), 15000) + Math.floor(Math.random()*400);
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
@@ -434,19 +549,19 @@
     if(syncing){ syncQueued = true; return; }
     syncing = true;
     const seqAtStart = changeSeq;
-    const key = getDeviceKey();
+    const backend = resolveSyncBackend();   // account (v2) OR legacy (device key) — legacy path unchanged
     const hadPending = isPending();
     if(hadPending){ syncState = 'syncing'; updateSyncBadge(); }
     try{
       if(!M) throw new Error('model unavailable');
-      if(!key){ if(hadPending){ needsKey = true; syncState = 'need-key'; } return; }
+      if(!backend){ if(hadPending){ needsKey = true; syncState = 'need-key'; } return; } // legacy: no device key yet
       const op = store ? await store.pendingOp() : null;
       const opId = op ? op.op_id : newId();
       const commitReason = (op && op.reason) || reason || 'sync'; // reason from the durable outbox (survives races)
 
       for(let attempt=0; attempt<MAX_ATTEMPTS; attempt++){
-        const pull = await rpc('ayyam_pull', { p_key: key });
-        if(pull.status === 'unauthorized'){ needsKey = true; syncState = 'need-key'; setDeviceKey(''); return; }
+        const pull = await backend.pull();
+        if(pull.status === 'unauthorized'){ handleAuthReject(); return; }
         needsKey = false;
         const serverEn = pull.exists ? M.toEnriched(pull.data, 1) : M.empty(0);
         const serverRev = pull.exists ? pull.revision : 0;
@@ -464,8 +579,8 @@
           clearSyncRetry();
           return;
         }
-        const commit = await rpc('ayyam_commit', { p_key:key, p_expected_revision: serverRev, p_data: merged, p_op_id: opId, p_reason: commitReason });
-        if(commit.status === 'unauthorized'){ needsKey = true; syncState='need-key'; setDeviceKey(''); return; }
+        const commit = await backend.commit(serverRev, merged, opId, commitReason);
+        if(commit.status === 'unauthorized'){ handleAuthReject(); return; }
         if(commit.status === 'conflict'){ await sleep(backoff(attempt)); continue; } // someone wrote first → re-pull/re-merge
         if(commit.status === 'invalid' || commit.status === 'too_large'){ syncState='error'; if(store) store.logDiag({type:'commit-rejected', status:commit.status}); return; }
         // ok or duplicate (duplicate = our earlier write already applied; safe)
@@ -2386,12 +2501,12 @@
   // the default schedule as if it were the user's real data when we simply couldn't reach the server.
   // → 'ready' (adopted real data) | 'empty' (server reachable, no data) | 'need-key' | 'unreachable'
   async function firstLoadPull(){
-    const key = getDeviceKey();
-    if(!key) return 'need-key';
+    const backend = resolveSyncBackend();
+    if(!backend) return accountMode ? 'need-auth' : 'need-key';
     if(!M || !sb) return 'unreachable';
     try{
-      const pull = await rpc('ayyam_pull', { p_key: key });
-      if(pull.status === 'unauthorized'){ keyDiag.pull='unauthorized'; setDeviceKey(''); return 'need-key'; }
+      const pull = await backend.pull();
+      if(pull.status === 'unauthorized'){ if(accountMode){ sessionExpired=true; return 'need-auth'; } keyDiag.pull='unauthorized'; setDeviceKey(''); return 'need-key'; }
       keyDiag.pull = 'ready';
       if(pull.exists){
         const serverEn = M.toEnriched(pull.data, 1);
@@ -2450,7 +2565,16 @@
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
   if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); checkNativeUpdate(); }); }catch(e){} }
 
-  const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
+  // P2: detect an authenticated session BEFORE opening storage, so account mode picks the per-user DB.
+  // No session → legacy mode (byte-identical to the shipped app). Auth changes trigger a controlled reload.
+  try{
+    const sess = (sb && AC()) ? await AC().getSession(sb) : null;
+    accountUid = AC() ? AC().userIdOf(sess) : null;
+    accountMode = !!accountUid;
+  }catch(e){ accountMode=false; accountUid=null; }
+  try{ if(sb && AC()) AC().onAuthChange(sb, (s)=> onAuthChanged(s)); }catch(e){}
+
+  const init = await initStorage();          // open IndexedDB (per-user in account mode), migrate once, load
   if(init.state) setState(init.state);
   applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
   selectedDate = parseKey(todayKey()); // canonical "today" once prefs (dayTimezone) are loaded
@@ -2468,6 +2592,8 @@
   }
   updateSyncBadge();
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
+  authReady = true;   // from now on, real auth transitions (sign-in/out/switch) trigger a controlled reload
+  try{ setupAccountUI(); }catch(e){}
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
   scheduleNotifPlan();  // seed the local reminder plan
   if(NATIVE){

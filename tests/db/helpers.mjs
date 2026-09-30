@@ -116,7 +116,20 @@ export const rpc2 = {
   claim: async (db, uid, key = DEVICE_KEY) => (await asUser(db, uid, 'select public.ayyam_claim($1) as r', [key])).rows[0].r,
   freeze: async (db, uid, key = DEVICE_KEY) => (await asUser(db, uid, 'select public.ayyam_freeze_legacy($1) as r', [key])).rows[0].r,
   accountState: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_account_state_v2() as r')).rows[0].r,
+  begin: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_migration_begin_v2() as r')).rows[0].r,
+  complete: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_migration_complete_v2() as r')).rows[0].r,
 };
+
+// A migration backend bound to a specific authenticated user, for the P2 migration engine (AyyamAccount.migrate).
+export function migrationBackend(db, uid, key = DEVICE_KEY) {
+  return {
+    claim: () => rpc2.claim(db, uid, key),
+    begin: () => rpc2.begin(db, uid),
+    complete: () => rpc2.complete(db, uid),
+    pull: () => rpc2.pull(db, uid),
+    commit: (expected, data, opId, reason) => rpc2.commit(db, uid, { expected, data, opId, reason }),
+  };
+}
 
 export const bundle = (logs = {}, extra = {}) => ({
   template: { sat: [], sun: [], mon: [], tue: [], wed: [], thu: [], fri: [] },

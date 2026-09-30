@@ -18,6 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="js/storage.js"></script>
 <script src="js/sync-model.js"></script>
+<script src="js/account.js"></script>
 <script src="js/time-model.js"></script>
 <script src="js/routines-model.js"></script>
 <script src="js/analytics-model.js"></script>
@@ -181,7 +182,11 @@
     <span class="brand brand-strong">القالب الأسبوعي</span>
   </header>
   <div class="wrap">
-    <p style="color:var(--text-dim);font-size:13px;margin-top:0;">
+    <div class="report-card" id="accountCard" style="margin-top:0;">
+      <h3>الحساب</h3>
+      <div id="accountBox" class="account-box"></div>
+    </div>
+    <p style="color:var(--text-dim);font-size:13px;margin-top:22px;">
       عدّل جدولك المتكرر لكل يوم. أي تعديل هنا يطبَّق من اليوم فصاعدًا، والأيام السابقة تحتفظ بمهامها كما كانت.
     </p>
 
