@@ -16,6 +16,10 @@
   transition:color var(--motion-fast) var(--ease-standard),border-color var(--motion-fast),background var(--motion-fast);}
 .icon-btn:hover{color:var(--color-text);border-color:var(--color-border-strong);}
 .icon-btn:active{transform:translateY(1px);}
+/* one unified SVG icon language across the header (replaces the old mixed emoji) */
+.icon-btn svg{width:20px;height:20px;display:block;}
+.theme-toggle button svg{width:17px;height:17px;display:block;}
+.theme-toggle button{display:flex;align-items:center;justify-content:center;}
 
 /* ---------- Today: hero, spectrum, stats (colour/radius/shadow only) ---------- */
 .seg{background:color-mix(in srgb,var(--color-text) 7%,transparent);}
@@ -99,6 +103,16 @@
 /* ---------- Reports / Settings cards ---------- */
 .report-card{border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);padding:var(--space-lg);margin-top:var(--space-lg);}
 .report-card h3{font-size:15px;font-weight:var(--fw-bold);color:var(--color-text);}
+
+/* ---------- Settings: grouped sections (P8) ---------- */
+.set-wrap{padding-top:var(--space-sm);}
+.set-section{margin-top:var(--space-2xl);}
+.set-section:first-child{margin-top:var(--space-sm);}
+.set-title{font-size:12.5px;font-weight:var(--fw-bold);color:var(--color-text-secondary);
+  letter-spacing:.3px;margin:0 0 var(--space-sm);padding-inline-start:var(--space-xs);}
+.set-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-sm);padding:var(--space-lg);}
+.set-hint{color:var(--color-text-secondary);font-size:13px;line-height:1.7;margin:0;}
 .tpl-day-btn{min-height:40px;border-radius:var(--radius-pill);}
 .tpl-day-btn.active{border-color:var(--color-primary);}
 

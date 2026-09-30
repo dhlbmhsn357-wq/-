@@ -2829,6 +2829,13 @@
     if(oe){ oe.innerHTML = '<button class="btn ghost acct-open" id="replayOnb" style="margin-top:10px;">إعادة الجولة التعريفية</button>';
       const rb=$('replayOnb'); if(rb) rb.addEventListener('click', ()=>{ try{ $('settingsView').classList.add('hidden'); $('mainView').classList.remove('hidden'); }catch(e){} replayOnboarding(); }); }
   }
+  // P8 settings meta: app version, hide the legacy sync-key card for account users (never expose it), native update check.
+  try{
+    const av = $('appVersionInfo'); if(av) av.textContent = 'أيام · الإصدار ' + APP_VERSION + (NATIVE ? ' — أندرويد' : ' — ويب');
+    if(accountMode){ const sk = $('syncKeyCard'); if(sk) sk.classList.add('hidden'); }
+    if(NATIVE){ const ur=$('appUpdateRow'); if(ur) ur.classList.remove('hidden');
+      const cb=$('checkUpdateBtn'); if(cb) cb.addEventListener('click', ()=>{ try{ checkNativeUpdate(); }catch(e){} }); }
+  }catch(e){}
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
   scheduleNotifPlan();  // seed the local reminder plan
   if(NATIVE){
