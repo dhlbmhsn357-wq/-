@@ -1,32 +1,6 @@
-  :root{
-    --bg:#12161c;
-    --surface:#1a212bcc;
-    --surface2:#212a36ee;
-    --line:rgba(231,226,211,0.09);
-    --text:#e7e2d3;
-    --text-dim:#a6a596;
-    --fajr:#7C93C4;
-    --dhuhr:#E8B84B;
-    --asr:#C4703A;
-    --maghrib:#B9456B;
-    --isha:#4A5A8C;
-    --good:#7fae7a;
-    --bad:#c46a6a;
-    --radius:16px;
-    --bg-overlay: rgba(10,12,16,0.72);
-    --bg-blur: 0px;
-  }
-  [data-theme="day"]{
-    --bg:#EFE9DC;
-    --surface:#ffffffcc;
-    --surface2:#ffffffee;
-    --line:rgba(30,26,18,0.10);
-    --text:#241f18;
-    --text-dim:#6b6154;
-    --good:#4d8a49;
-    --bad:#b6533f;
-    --bg-overlay: rgba(255,250,238,0.78);
-  }
+  /* Design-system tokens (colour/type/space/radius/shadow/motion + light/dark) live in css/tokens.css,
+     loaded before this file. The legacy variable names used below (--bg, --surface, --text, --dhuhr, …)
+     are kept as aliases there, so the shipped styles keep working while new work uses the semantic tokens. */
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;max-width:100%;overflow-x:hidden;}
   body{

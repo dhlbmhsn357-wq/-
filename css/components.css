@@ -1,0 +1,166 @@
+/* ============================================================================
+   Ayyam Design System — Components (P6)
+   Reusable, token-driven building blocks (prefix `ds-`) for P7 to adopt.
+   Every interactive component has default / hover (web) / pressed / focus /
+   disabled states, a ≥44px touch target, and honours reduced motion via tokens.
+   Load AFTER tokens.css. RTL-first (the app is dir="rtl").
+   ============================================================================ */
+
+/* Global keyboard focus ring — visible only for keyboard users. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- typography helpers ---- */
+.ds-display{font-family:var(--font-display);font-size:var(--text-display);line-height:var(--lh-display);color:var(--color-text);letter-spacing:.5px;}
+.ds-h1{font-family:var(--font-ui);font-weight:var(--fw-extrabold);font-size:var(--text-h1);line-height:var(--lh-h1);color:var(--color-text);}
+.ds-h2{font-family:var(--font-ui);font-weight:var(--fw-bold);font-size:var(--text-h2);line-height:var(--lh-h2);color:var(--color-text);}
+.ds-h3{font-family:var(--font-ui);font-weight:var(--fw-semibold);font-size:var(--text-h3);line-height:var(--lh-h3);color:var(--color-text);}
+.ds-body-lg{font-size:var(--text-body-lg);line-height:var(--lh-body-lg);color:var(--color-text);}
+.ds-body{font-size:var(--text-body);line-height:var(--lh-body);color:var(--color-text);}
+.ds-small{font-size:var(--text-small);line-height:var(--lh-small);color:var(--color-text-secondary);}
+.ds-caption{font-size:var(--text-caption);line-height:var(--lh-caption);color:var(--color-muted);}
+
+/* ---- buttons ---- */
+.ds-btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--space-sm);
+  min-height:44px;padding:0 var(--space-lg);border-radius:var(--radius-md);
+  font-family:var(--font-ui);font-size:var(--text-button);font-weight:var(--fw-semibold);
+  border:1px solid transparent;cursor:pointer;user-select:none;
+  transition:background var(--motion-fast) var(--ease-standard),
+             border-color var(--motion-fast) var(--ease-standard),
+             transform var(--motion-fast) var(--ease-standard),opacity var(--motion-fast);
+}
+.ds-btn:active{transform:translateY(1px);}
+.ds-btn[disabled],.ds-btn:disabled{opacity:.5;cursor:default;pointer-events:none;}
+.ds-btn-primary{background:var(--color-primary);color:var(--color-on-primary);}
+.ds-btn-primary:hover{background:var(--color-primary-hover);}
+.ds-btn-primary:active{background:var(--color-primary-pressed);}
+.ds-btn-secondary{background:var(--color-secondary);color:#fff;}
+.ds-btn-secondary:hover{filter:brightness(1.08);}
+.ds-btn-ghost{background:var(--color-surface);color:var(--color-text-secondary);border-color:var(--color-border);}
+.ds-btn-ghost:hover{color:var(--color-text);border-color:var(--color-border-strong);}
+.ds-btn-danger{background:transparent;color:var(--color-danger);border-color:var(--color-danger);}
+.ds-btn-danger:hover{background:color-mix(in srgb,var(--color-danger) 12%,transparent);}
+.ds-btn-block{width:100%;}
+.ds-btn-sm{min-height:36px;padding:0 var(--space-md);font-size:var(--text-small);}
+
+/* icon button (square, ≥44px) */
+.ds-icon-btn{
+  display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;
+  border-radius:var(--radius-md);background:var(--color-surface);border:1px solid var(--color-border);
+  color:var(--color-text-secondary);cursor:pointer;font-size:18px;line-height:1;
+  transition:color var(--motion-fast),border-color var(--motion-fast),background var(--motion-fast);
+}
+.ds-icon-btn:hover{color:var(--color-text);border-color:var(--color-border-strong);}
+.ds-icon-btn:active{transform:translateY(1px);}
+.ds-icon-btn[disabled]{opacity:.5;pointer-events:none;}
+
+/* ---- inputs ---- */
+.ds-field{display:flex;flex-direction:column;gap:var(--space-xs);margin-bottom:var(--space-md);}
+.ds-label{font-size:var(--text-small);color:var(--color-text-secondary);font-weight:var(--fw-medium);}
+.ds-input,.ds-select{
+  width:100%;box-sizing:border-box;min-height:44px;padding:0 var(--space-md);
+  background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);
+  color:var(--color-text);font-family:var(--font-ui);font-size:var(--text-body-lg);
+  transition:border-color var(--motion-fast);
+}
+.ds-input::placeholder{color:var(--color-muted);}
+.ds-input:hover,.ds-select:hover{border-color:var(--color-border-strong);}
+.ds-input:focus,.ds-select:focus{outline:none;border-color:var(--color-primary);}
+.ds-input[disabled],.ds-select[disabled]{opacity:.55;pointer-events:none;}
+.ds-input[aria-invalid="true"],.ds-input.is-error{border-color:var(--color-danger);}
+.ds-error{color:var(--color-danger);font-size:var(--text-caption);}
+/* password field: input + reveal toggle */
+.ds-input-wrap{position:relative;display:flex;align-items:center;}
+.ds-input-wrap .ds-input{padding-inline-end:44px;}
+.ds-reveal{position:absolute;inset-inline-end:4px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;
+  background:none;border:none;color:var(--color-muted);cursor:pointer;border-radius:var(--radius-sm);}
+.ds-reveal:hover{color:var(--color-text);}
+.ds-select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--color-muted) 50%),linear-gradient(135deg,var(--color-muted) 50%,transparent 50%);
+  background-position:calc(var(--space-md)) center,calc(var(--space-md) + 5px) center;background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
+
+/* ---- chips ---- */
+.ds-chip{
+  display:inline-flex;align-items:center;gap:var(--space-xs);min-height:36px;padding:0 var(--space-md);
+  border-radius:var(--radius-pill);background:var(--color-surface);border:1px solid var(--color-border);
+  color:var(--color-text-secondary);font-size:var(--text-small);cursor:pointer;
+  transition:background var(--motion-fast),color var(--motion-fast),border-color var(--motion-fast);
+}
+.ds-chip:hover{color:var(--color-text);}
+.ds-chip[aria-pressed="true"],.ds-chip.is-active{background:color-mix(in srgb,var(--color-primary) 18%,transparent);
+  border-color:var(--color-primary);color:var(--color-text);}
+
+/* ---- badges & status pills ---- */
+.ds-badge{display:inline-flex;align-items:center;padding:2px var(--space-sm);border-radius:var(--radius-pill);
+  font-size:var(--text-caption);font-weight:var(--fw-semibold);background:var(--color-elevated);color:var(--color-text-secondary);}
+.ds-pill{display:inline-flex;align-items:center;gap:4px;padding:3px var(--space-sm);border-radius:var(--radius-pill);
+  font-size:var(--text-caption);font-weight:var(--fw-medium);}
+.ds-pill-success{color:var(--color-success);background:color-mix(in srgb,var(--color-success) 15%,transparent);}
+.ds-pill-warning{color:var(--color-warning);background:color-mix(in srgb,var(--color-warning) 15%,transparent);}
+.ds-pill-danger{color:var(--color-danger);background:color-mix(in srgb,var(--color-danger) 15%,transparent);}
+.ds-pill-overdue{color:var(--color-overdue);background:color-mix(in srgb,var(--color-overdue) 15%,transparent);}
+.ds-pill-excused{color:var(--color-excused);background:color-mix(in srgb,var(--color-excused) 16%,transparent);}
+.ds-pill-replaced{color:var(--color-replaced);background:color-mix(in srgb,var(--color-replaced) 16%,transparent);}
+
+/* ---- cards ---- */
+.ds-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);
+  padding:var(--space-lg);box-shadow:var(--shadow-sm);}
+.ds-card-elevated{background:var(--color-elevated);box-shadow:var(--shadow-md);}
+
+/* sample task card (reference — P7 will migrate the real one) */
+.ds-task{display:flex;align-items:center;gap:var(--space-md);background:var(--color-surface);
+  border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-md) var(--space-lg);}
+.ds-task-check{width:24px;height:24px;flex:none;border-radius:var(--radius-sm);border:2px solid var(--color-text-secondary);cursor:pointer;
+  transition:background var(--motion-fast),border-color var(--motion-fast);}
+.ds-task-check.is-done{background:var(--color-primary);border-color:var(--color-primary);}
+.ds-task-body{flex:1;min-width:0;}
+.ds-task-title{font-size:var(--text-body-lg);color:var(--color-text);}
+.ds-task.is-done .ds-task-title{color:var(--color-text-secondary);text-decoration:line-through;}
+.ds-task-sub{font-size:var(--text-caption);color:var(--color-muted);margin-top:2px;}
+
+/* ---- bottom sheet ---- */
+.ds-scrim{position:fixed;inset:0;background:var(--color-scrim);z-index:400;}
+.ds-sheet{position:fixed;inset-inline:0;bottom:0;z-index:401;background:var(--color-elevated);
+  border-radius:var(--radius-xl) var(--radius-xl) 0 0;padding:var(--space-lg) var(--space-lg) calc(var(--space-lg) + env(safe-area-inset-bottom));
+  box-shadow:var(--shadow-lg);max-width:640px;margin:0 auto;animation:ds-sheet-up var(--motion-normal) var(--ease-out);}
+.ds-sheet-handle{width:38px;height:4px;border-radius:var(--radius-pill);background:var(--color-border-strong);margin:0 auto var(--space-md);}
+@keyframes ds-sheet-up{from{transform:translateY(100%);}to{transform:none;}}
+
+/* ---- dialog ---- */
+.ds-dialog{position:fixed;inset:0;z-index:402;display:flex;align-items:center;justify-content:center;padding:var(--space-lg);background:var(--color-scrim);}
+.ds-dialog-card{width:100%;max-width:360px;background:var(--color-elevated);border:1px solid var(--color-border);
+  border-radius:var(--radius-xl);padding:var(--space-xl);box-shadow:var(--shadow-lg);animation:ds-pop var(--motion-normal) var(--ease-standard);}
+@keyframes ds-pop{from{opacity:0;transform:translateY(8px) scale(.98);}to{opacity:1;transform:none;}}
+
+/* ---- toast ---- */
+.ds-toast{display:inline-flex;align-items:center;gap:var(--space-sm);background:var(--color-elevated);
+  border:1px solid var(--color-border);border-radius:var(--radius-md);padding:var(--space-md) var(--space-lg);
+  color:var(--color-text);font-size:var(--text-small);box-shadow:var(--shadow-md);}
+.ds-toast-success{border-inline-start:3px solid var(--color-success);}
+.ds-toast-danger{border-inline-start:3px solid var(--color-danger);}
+
+/* ---- empty state ---- */
+.ds-empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:var(--space-sm);padding:var(--space-4xl) var(--space-xl);}
+.ds-empty-emoji{font-size:40px;line-height:1;}
+.ds-empty-title{font-family:var(--font-ui);font-weight:var(--fw-bold);font-size:var(--text-h3);color:var(--color-text);margin:0;}
+.ds-empty-sub{color:var(--color-text-secondary);font-size:var(--text-small);max-width:280px;margin:0;}
+
+/* ---- tabs ---- */
+.ds-tabs{display:flex;gap:var(--space-xs);background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:4px;}
+.ds-tab{flex:1;min-height:36px;border:none;background:none;border-radius:var(--radius-pill);color:var(--color-text-secondary);
+  font-family:var(--font-ui);font-size:var(--text-small);cursor:pointer;transition:background var(--motion-fast),color var(--motion-fast);}
+.ds-tab[aria-selected="true"],.ds-tab.is-active{background:var(--color-elevated);color:var(--color-text);font-weight:var(--fw-semibold);}
+
+/* ---- progress ---- */
+.ds-progress{height:8px;border-radius:var(--radius-pill);background:var(--color-surface);overflow:hidden;}
+.ds-progress-bar{height:100%;background:var(--color-primary);border-radius:var(--radius-pill);transition:width var(--motion-normal) var(--ease-out);}
+
+/* ---- skeleton / loading ---- */
+.ds-skeleton{background:linear-gradient(90deg,var(--color-surface) 25%,var(--color-elevated) 37%,var(--color-surface) 63%);
+  background-size:400% 100%;border-radius:var(--radius-sm);animation:ds-shimmer 1.4s ease infinite;}
+@keyframes ds-shimmer{0%{background-position:100% 0;}100%{background-position:0 0;}}
+.ds-spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--color-border);border-top-color:var(--color-primary);animation:ds-spin .8s linear infinite;}
+@keyframes ds-spin{to{transform:rotate(360deg);}}
