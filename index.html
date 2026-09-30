@@ -20,6 +20,7 @@
 <script src="js/sync-model.js"></script>
 <script src="js/account.js"></script>
 <script src="js/auth-ui.js"></script>
+<script src="js/admin.js"></script>
 <script src="js/time-model.js"></script>
 <script src="js/routines-model.js"></script>
 <script src="js/analytics-model.js"></script>
@@ -49,6 +50,8 @@
 
 <!-- Premium full-screen auth experience (P3). Rendered by js/auth-ui.js. -->
 <div id="authView" class="auth-view hidden"></div>
+<!-- Admin dashboard (P4). Rendered by js/admin.js. Reachable only when is_admin() is true. -->
+<div id="adminView" class="admin-view hidden"></div>
 
 <div id="syncBadge" class="sync-badge hidden"></div>
 <!-- App update available banner -->
@@ -189,6 +192,7 @@
     <div class="report-card" id="accountCard" style="margin-top:0;">
       <h3>الحساب</h3>
       <div id="accountBox" class="account-box"></div>
+      <div id="adminEntry"></div>
     </div>
     <p style="color:var(--text-dim);font-size:13px;margin-top:22px;">
       عدّل جدولك المتكرر لكل يوم. أي تعديل هنا يطبَّق من اليوم فصاعدًا، والأيام السابقة تحتفظ بمهامها كما كانت.

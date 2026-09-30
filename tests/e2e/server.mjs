@@ -63,6 +63,11 @@ const RPC = {
   ayyam_migration_complete_v2: [],
   ayyam_claim: ['p_key'],
   ayyam_freeze_legacy: ['p_key'],
+  // P4 admin/analytics — is_admin + track (authenticated), admin read RPCs (backend-gated on is_admin()).
+  is_admin: [],
+  ayyam_track: ['p_name', 'p_platform', 'p_app_version', 'p_display_name'],
+  ayyam_admin_overview: [],
+  ayyam_admin_users: ['p_search', 'p_limit', 'p_offset', 'p_sort', 'p_dir'],
 };
 const JSON_ARG = new Set(['p_data']);
 const authUsers = new Map();  // email → { id, password } (mock GoTrue)
@@ -93,7 +98,7 @@ async function callRpc(fn, args, token) {
   const order = RPC[fn];
   if (!order) return { error: { message: 'not allowed' } };
   const params = order.map((k) => (JSON_ARG.has(k) ? JSON.stringify(args[k]) : args[k]));
-  const casts = order.map((k, i) => `$${i + 1}${JSON_ARG.has(k) ? '::jsonb' : (k.includes('revision') || k.includes('snapshot') ? '::bigint' : (k.includes('op_id') ? '::uuid' : ''))}`);
+  const casts = order.map((k, i) => `$${i + 1}${JSON_ARG.has(k) ? '::jsonb' : (k.includes('revision') || k.includes('snapshot') ? '::bigint' : (k.includes('op_id') ? '::uuid' : (k === 'p_limit' || k === 'p_offset' ? '::int' : '')))}`);
   // A token (mock JWT = the user's uid) runs the call as the `authenticated` role with auth.uid()=token,
   // exactly as PostgREST does for a signed-in supabase-js client. No token → the legacy `anon` path.
   return tx(async () => {
@@ -151,12 +156,20 @@ const server = http.createServer(async (req, res) => {
   if (p === '/__ctl/reset') { failEndpoints = new Set(); sentPushes.length = 0; outage = null; authUsers.clear();
     return tx(async () => {
       await db.exec(`truncate public.ayyam_data, public.ayyam_snapshots, public.ayyam_ops, public.push_subscriptions, public.push_reminders, public.push_deliveries restart identity cascade;`);
-      // P1/P2 account state (best-effort — present only after those migrations): reset for test isolation.
+      // P1/P2/P4 account state (best-effort — present only after those migrations): reset for test isolation.
       await db.exec(`truncate public.profiles, public.user_roles, public.user_account_state cascade;`).catch(() => {});
+      await db.exec(`truncate public.ayyam_events restart identity;`).catch(() => {});
       await db.exec(`delete from auth.users;`).catch(() => {});
       await db.exec(`update public.ayyam_legacy_claim set claimed_by=null, claimed_at=null, frozen=false, frozen_at=null where row_id='main';`).catch(() => {});
       send(res, 200, { ok: true }); }); }
   if (p === '/__ctl/outage') { outage = url.searchParams.get('mode') || null; return send(res, 200, { outage }); }
+  // Grant admin the ONLY legitimate way (service_role, like the SQL editor). Tests use this to become admin.
+  if (p === '/__ctl/make-admin') { const email = url.searchParams.get('email') || '';
+    const u = authUsers.get(email); if (!u) return send(res, 404, { error: 'no such user' });
+    return tx(async () => { await db.exec('set role service_role');
+      try { await db.query("insert into public.user_roles (user_id, role) values ($1,'admin') on conflict (user_id) do update set role='admin'", [u.id]); }
+      finally { await db.exec('reset role'); }
+      send(res, 200, { ok: true, uid: u.id }); }); }
   if (p === '/__ctl/sw-version') { swVersion = url.searchParams.get('v') || null; swBreak = url.searchParams.get('break') === '1'; return send(res, 200, { swVersion, swBreak }); }
   if (p === '/__ctl/db') return tx(async () => {
     const main = (await db.query(`select revision, epoch, data from public.ayyam_data where id='main'`)).rows[0] || null;

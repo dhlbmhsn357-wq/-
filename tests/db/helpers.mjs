@@ -118,7 +118,21 @@ export const rpc2 = {
   accountState: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_account_state_v2() as r')).rows[0].r,
   begin: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_migration_begin_v2() as r')).rows[0].r,
   complete: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_migration_complete_v2() as r')).rows[0].r,
+  // P4 admin/analytics
+  track: async (db, uid, { name, platform = null, appVersion = null, displayName = null } = {}) =>
+    (await asUser(db, uid, 'select public.ayyam_track($1,$2,$3,$4) as r', [name, platform, appVersion, displayName])).rows[0].r,
+  isAdmin: async (db, uid) => (await asUser(db, uid, 'select public.is_admin() as r')).rows[0].r,
+  adminOverview: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_admin_overview() as r')).rows[0].r,
+  adminUsers: async (db, uid, { search = null, limit = 25, offset = 0, sort = 'last_seen_at', dir = 'desc' } = {}) =>
+    (await asUser(db, uid, 'select public.ayyam_admin_users($1,$2,$3,$4,$5) as r', [search, limit, offset, sort, dir])).rows[0].r,
 };
+
+/** Grant a user the admin role the ONLY legitimate way — as service_role (like the SQL editor). */
+export async function grantAdmin(db, uid) {
+  await db.query('set role service_role');
+  try { await db.query("insert into public.user_roles (user_id, role) values ($1,'admin') on conflict (user_id) do update set role='admin'", [uid]); }
+  finally { await db.exec('reset role'); }
+}
 
 // A migration backend bound to a specific authenticated user, for the P2 migration engine (AyyamAccount.migrate).
 export function migrationBackend(db, uid, key = DEVICE_KEY) {

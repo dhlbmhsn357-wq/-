@@ -548,6 +548,7 @@
             return;
           }
           // session established → onAuthChanged handles migration + reload
+          sessionActive = true; track('signup_completed', v.name || v.email);
           AU.message('تم — جارٍ تجهيز حسابك…', 'success');
           if(o.reloadOnSuccess) setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 700);
         } else if(m==='signin'){
@@ -555,6 +556,7 @@
           AU.busy(true); AU.message('جارٍ تسجيل الدخول…', 'info');
           const r = await doSignIn(v.email, v.password);
           if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'signin'), 'error'); return; }
+          sessionActive = true; track('login_success');
           AU.message('تم — جارٍ فتح حسابك…', 'success');
           if(o.reloadOnSuccess) setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 700);
         } else if(m==='forgot'){
@@ -595,6 +597,52 @@
         <button class="btn primary acct-open" id="acctOpenAuth">تسجيل الدخول أو إنشاء حساب</button>`;
       const ob=$('acctOpenAuth'); if(ob) ob.addEventListener('click', ()=> openAuth('signin', { dismissible:true }));
     }
+  }
+
+  // ---------- product analytics (P4): privacy-conscious events. NEVER any content — only an event name from
+  // a fixed whitelist + platform + app version + the user's own display name. Fire-and-forget; account-only.
+  const PLATFORM = NATIVE ? 'android' : 'web';
+  let sessionActive = false, accountDisplayName = null;
+  async function track(name, displayName){
+    try{
+      if(!sb || !sessionActive) return;
+      await withTimeout(sb.rpc('ayyam_track', { p_name:name, p_platform:PLATFORM, p_app_version:APP_VERSION,
+        p_display_name: displayName || accountDisplayName || null }), SYNC_TIMEOUT_MS);
+    }catch(e){}
+  }
+  // onboarding_completed once per account (until P5 owns the real onboarding finish). Proxy: first ready load.
+  function maybeOnboarded(){
+    try{
+      if(!(sessionActive && accountUid)) return;
+      const k = 'ayyam_onboarded_v1::' + accountUid;
+      if(localStorage.getItem(k)) return;
+      localStorage.setItem(k, '1');
+      track('onboarding_completed');
+    }catch(e){}
+  }
+
+  // ---------- admin access (P4): revealed ONLY when is_admin() is true. Authority is 100% backend-side —
+  // the admin RPCs return 'forbidden' to everyone else, so this is a reveal, not a gate.
+  let adminEnabled = false;
+  function openAdmin(){ try{ if(globalThis.AyyamAdmin) globalThis.AyyamAdmin.open(); }catch(e){} }
+  function hashAdminMaybe(){
+    if(adminEnabled && location.hash === '#admin' && globalThis.AyyamAdmin && !globalThis.AyyamAdmin.isOpen()) openAdmin();
+  }
+  function enableAdmin(){
+    if(adminEnabled) return; adminEnabled = true;
+    try{ if(globalThis.AyyamAdmin) globalThis.AyyamAdmin.init({ call: (fn,args)=> rpc(fn,args) }); }catch(e){}
+    const slot = $('adminEntry');
+    if(slot){ slot.innerHTML = '<button class="btn ghost acct-open" id="openAdmin" style="margin-top:10px;">لوحة التحكم</button>';
+      const b=$('openAdmin'); if(b) b.addEventListener('click', openAdmin); }
+    window.addEventListener('hashchange', hashAdminMaybe);
+    hashAdminMaybe();
+  }
+  async function checkAdmin(){
+    try{
+      if(!(sb && accountMode)) return;
+      const { data, error } = await withTimeout(sb.rpc('is_admin'), SYNC_TIMEOUT_MS);
+      if(!error && data === true) enableAdmin();
+    }catch(e){}
   }
 
   const MAX_ATTEMPTS = 6;
@@ -1603,7 +1651,7 @@
         const id = nid();
         routines[id] = { id, seriesId:id, title, time:'', timeValue, period, order:Object.keys(routines).length, rec };
       }
-      await saveBundle('sync'); closeAddSheet(); render(); return;
+      await saveBundle('sync'); closeAddSheet(); render(); track('task_created'); return;
     }
 
     // EDIT an existing occurrence
@@ -1889,6 +1937,7 @@
     $('reportsView').classList.remove('hidden');
     $('fabAdd').classList.add('hidden');
     renderReports();
+    track('insights_opened');
   }
   function closeReports(){
     $('reportsView').classList.add('hidden');
@@ -1908,6 +1957,7 @@
     $('calendarView').classList.remove('hidden');
     $('fabAdd').classList.add('hidden');
     renderCalWeekdays(); renderCalLegend(); renderCalendar();
+    track('calendar_opened');
   }
   function closeCalendar(){
     $('calendarView').classList.add('hidden');
@@ -2662,6 +2712,9 @@
     const sess = (sb && AC()) ? await AC().getSession(sb) : null;
     accountUid = AC() ? AC().userIdOf(sess) : null;
     accountMode = !!accountUid;
+    sessionActive = accountMode;
+    const su = sess && sess.user;
+    accountDisplayName = (su && ((su.user_metadata && su.user_metadata.display_name) || su.email)) || null;
   }catch(e){ accountMode=false; accountUid=null; }
   try{ if(sb && AC()) AC().onAuthChange(sb, (s, ev)=> onAuthChanged(s, ev)); }catch(e){}
 
@@ -2685,6 +2738,7 @@
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
   authReady = true;   // from now on, real auth transitions (sign-in/out/switch) trigger a controlled reload
   try{ setupAccountUI(); }catch(e){}
+  if(accountMode){ track('app_open'); if(!enrichedIsEmpty()) maybeOnboarded(); checkAdmin(); } // P4 analytics + admin reveal
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
   scheduleNotifPlan();  // seed the local reminder plan
   if(NATIVE){
