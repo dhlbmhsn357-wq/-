@@ -19,7 +19,7 @@
       return '<h1 class="auth-title">أنشئ حسابك في أيام</h1>'
         + '<p class="auth-sub">' + VALUE_PROP + '</p>'
         + '<input id="authName" class="auth-input" type="text" autocomplete="name" placeholder="الاسم" />'
-        + email + pass('new-password', 'كلمة المرور (٨ أحرف على الأقل)')
+        + email + pass('new-password', 'كلمة المرور (٦ أحرف على الأقل)')
         + '<button class="btn primary auth-submit" id="authSubmit">إنشاء الحساب</button>'
         + '<div id="authMsg" class="auth-msg" role="status" aria-live="polite"></div>'
         + '<p class="auth-switch">لديك حساب بالفعل؟ <button type="button" class="auth-link" id="authSwitch">تسجيل الدخول</button></p>';

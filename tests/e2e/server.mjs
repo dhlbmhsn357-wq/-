@@ -207,7 +207,7 @@ const server = http.createServer(async (req, res) => {
   // ---- mock GoTrue auth (E2E only): create/lookup auth.users, issue a session whose token IS the uid ----
   if (p === '/__auth/signup' && req.method === 'POST') {
     const { email, password, data } = JSON.parse(await readBody(req) || '{}');
-    if (!email || !password || password.length < 8) return send(res, 200, { error: { message: 'password should be at least 8 characters' } });
+    if (!email || !password || password.length < 6) return send(res, 200, { error: { message: 'password should be at least 6 characters' } });
     if (authUsers.has(email)) return send(res, 200, { error: { message: 'already registered' } });
     const id = randomUUID();
     const display_name = (data && data.display_name) || null;

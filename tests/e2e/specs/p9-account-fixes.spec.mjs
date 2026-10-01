@@ -21,7 +21,7 @@ test('the device-key / sync-key concept is GONE from the public UI (gate + setti
   await expect(page.locator('#settingsView')).not.toContainText('مفتاح المزامنة');
 });
 
-test('signup requires a name (and a password of at least 8 chars)', async ({ page }) => {
+test('signup requires a name (and a password of at least 6 chars)', async ({ page }) => {
   await prepare(page, { key: false, now: '2026-09-28T09:00:00' });
   await page.goto('/');
   await expect(page.locator('#authName')).toBeVisible({ timeout: 15000 });   // signup gate
@@ -34,7 +34,7 @@ test('signup requires a name (and a password of at least 8 chars)', async ({ pag
   await page.locator('#authName').fill('سلمى');
   await page.locator('#authPass').fill('short');
   await page.locator('#authSubmit').click();
-  await expect(page.locator('#authMsg')).toContainText('٨ أحرف');
+  await expect(page.locator('#authMsg')).toContainText('٦ أحرف');
   // valid → proceeds into the account (name shown in the greeting)
   await page.locator('#authPass').fill('pass1234');
   await page.locator('#authSubmit').click();

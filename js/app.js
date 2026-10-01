@@ -533,8 +533,8 @@
     if(m.includes('not confirmed') || m.includes('not verified') || m.includes('confirm')) return 'لم يتم تأكيد بريدك بعد. افتح رسالة التأكيد في بريدك أولًا.';
     if(m.includes('invalid login') || m.includes('invalid credential') || (m.includes('invalid') && ctx==='signin')) return 'البريد أو كلمة المرور غير صحيحة.';
     if(m.includes('registered') || m.includes('exists') || m.includes('already')) return 'هذا البريد مسجّل بالفعل. جرّب تسجيل الدخول.';
-    if(m.includes('password') && m.includes('should')) return 'كلمة المرور قصيرة (٨ أحرف على الأقل).';
-    if(m.includes('password')) return 'كلمة المرور غير مقبولة (٨ أحرف على الأقل).';
+    if(m.includes('password') && m.includes('should')) return 'كلمة المرور قصيرة (٦ أحرف على الأقل).';
+    if(m.includes('password')) return 'كلمة المرور غير مقبولة (٦ أحرف على الأقل).';
     if(m.includes('email') && (m.includes('invalid') || m.includes('valid'))) return 'البريد الإلكتروني غير صالح.';
     return 'تعذّر إتمام العملية. حاول مرة أخرى.';
   }
@@ -552,7 +552,7 @@
           const nm = (v.name||'').trim();
           if(nm.length < 2 || nm.length > 60){ AU.message('أدخل اسمك (حرفان على الأقل).', 'error'); return; }
           if(!v.email){ AU.message('أدخل بريدك الإلكتروني.', 'error'); return; }
-          if((v.password||'').length < 8){ AU.message('كلمة المرور ٨ أحرف على الأقل.', 'error'); return; }
+          if((v.password||'').length < 6){ AU.message('كلمة المرور ٦ أحرف على الأقل.', 'error'); return; }
           AU.busy(true); AU.message('جارٍ إنشاء حسابك…', 'info');
           const r = await doSignUp(v.email, v.password, nm);
           if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'signup'), 'error'); return; }
@@ -582,7 +582,7 @@
           if(r && r.error){ AU.message(authMessage(r.error,'forgot'), 'error'); return; }
           AU.message('إن كان لديك حساب بهذا البريد، فستصلك رسالة بها رابط لإعادة التعيين.', 'success');
         } else if(m==='reset'){
-          if((v.password||'').length < 8){ AU.message('كلمة المرور ٨ أحرف على الأقل.', 'error'); return; }
+          if((v.password||'').length < 6){ AU.message('كلمة المرور ٦ أحرف على الأقل.', 'error'); return; }
           AU.busy(true); AU.message('جارٍ الحفظ…', 'info');
           const r = await doReset(v.password);
           if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'reset'), 'error'); return; }
