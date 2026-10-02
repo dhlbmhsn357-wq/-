@@ -9,7 +9,7 @@
     font-family:'Cairo', sans-serif;
     font-weight:400;
     min-height:100vh;
-    padding-bottom:110px;
+    padding-bottom:calc(92px + env(safe-area-inset-bottom));   /* clear the fixed bottom nav + safe area */
     position:relative;
   }
   body.has-bg{background-attachment:fixed;background-size:cover;background-position:center;}
@@ -17,7 +17,10 @@
     content:'';position:fixed;inset:0;background:var(--bg-overlay);
     backdrop-filter:blur(var(--bg-blur));z-index:0;pointer-events:none;
   }
-  #mainView, #settingsView, #reportsView{position:relative;z-index:1;}
+  #mainView, #settingsView, #reportsView, #routineView, #calendarView{position:relative;z-index:1;}
+  /* Today carries the FAB (raised to sit above the bottom nav) — give its content extra bottom clearance so
+     the last task/checkbox never falls under the FAB. Other screens only need the body's nav clearance. */
+  #mainView{padding-bottom:76px;}
   .wrap{max-width:640px;margin:0 auto;padding:0 16px;}
 
   /* header */
@@ -128,12 +131,52 @@
 
   /* fab */
   .fab{
-    position:fixed;bottom:24px;inset-inline-start:20px;
+    /* Float above the bottom nav, on the END side (left in RTL) so it never covers the task checkboxes,
+       which sit at the row START (right in RTL) and are the most frequent tap target. Shape/size/function
+       unchanged — only the corner offset moved to clear the nav + the checkbox column. */
+    position:fixed;bottom:calc(80px + env(safe-area-inset-bottom));inset-inline-end:20px;
     width:56px;height:56px;border-radius:50%;background:var(--dhuhr);color:var(--color-on-primary);
     border:none;font-size:30px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;
     box-shadow:0 8px 24px rgba(0,0,0,0.4);padding:0;padding-bottom:3px;font-family:'Cairo',sans-serif;font-weight:400;
     z-index:60;
   }
+
+  /* ---------- fixed bottom navigation (5 base screens) ---------- */
+  .bottom-nav{
+    position:fixed;inset-inline:0;bottom:0;z-index:40;
+    display:flex;align-items:stretch;justify-content:space-around;
+    background:var(--color-surface, var(--surface));
+    border-top:1px solid var(--color-border, var(--line));
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+    box-shadow:0 -4px 16px rgba(0,0,0,0.12);
+  }
+  .bnav-item{
+    flex:1 1 0;min-width:0;min-height:52px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    background:none;border:none;cursor:pointer;padding:4px 2px;
+    color:var(--color-text-secondary, var(--text-dim));
+    font-family:inherit;position:relative;transition:color .15s ease;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .bnav-item svg{width:24px;height:24px;flex:none;}
+  .bnav-label{font-size:11px;line-height:1;font-weight:600;}
+  .bnav-item.active{color:var(--color-primary, var(--dhuhr));}
+  .bnav-item.active svg{stroke-width:2.1;}
+  .bnav-item.active::before{   /* active indicator — not colour-only */
+    content:'';position:absolute;top:-6px;left:50%;transform:translateX(-50%);
+    width:22px;height:3px;border-radius:0 0 3px 3px;background:var(--color-primary, var(--dhuhr));
+  }
+  .bnav-item:focus-visible{outline:2px solid var(--color-primary, var(--dhuhr));outline-offset:-2px;border-radius:10px;}
+  /* the nav is for the 5 base screens only — hide it under full-screen flows + first-load overlays */
+  #loadingOverlay:not(.hidden) ~ .bottom-nav,
+  #startupState:not(.hidden) ~ .bottom-nav,
+  #authView:not(.hidden) ~ .bottom-nav,
+  #pinView:not(.hidden) ~ .bottom-nav,
+  body.auth-open .bottom-nav,
+  body.onb-open .bottom-nav,
+  body.admin-open .bottom-nav,
+  body.pin-open .bottom-nav{ display:none !important; }
+  @media (prefers-reduced-motion: reduce){ .bnav-item{transition:none;} }
 
   /* modal */
   .overlay{

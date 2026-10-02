@@ -79,13 +79,14 @@ test('editing a routine changes today/future but not a past day (routine managem
   await prepare(page, { key: true, now: '2026-09-27T10:00:00' }); // Sunday
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
-  // edit the recurring routine via the management screen (applies from today forward, past immutable)
-  await page.locator('#openSettings').click();
+  // edit the recurring routine via the Routine screen (now its own tab, moved out of Settings)
+  await page.locator('#bottomNav .bnav-item[data-screen="routine"]').click();
+  await expect(page.locator('#routineView')).toBeVisible();
   await page.locator('.tpl-day-btn', { hasText: 'الأحد' }).click();
   await page.locator('#tplTasks .tpl-routine-main').first().click();
   await page.locator('#taskTitle').fill('روتين معدّل اليوم');
   await page.locator('#saveAdd').click(); // template context → "this and future" (no scope prompt)
-  await page.locator('#closeSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="today"]').click();
   // today (Sunday 27) shows the edited routine
   await expect(page.locator('.task-title', { hasText: 'روتين معدّل اليوم' })).toBeVisible();
   // a PAST Sunday (Sep 20, before migrationDate) keeps the old schedule (not the edit)

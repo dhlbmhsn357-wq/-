@@ -357,7 +357,7 @@
     if(persist) await persistEnrichedState(en);
     applyPrefs();
     if(!$('mainView').classList.contains('hidden')) render();
-    if(!$('settingsView').classList.contains('hidden')){ renderTplDays(); renderTplTasks(); }
+    if($('routineView') && !$('routineView').classList.contains('hidden')){ renderTplDays(); renderTplTasks(); }
     if(!$('reportsView').classList.contains('hidden')) renderReports();
     scheduleWidgetPush(); // adopt/merge/pull/reset changed today's data → refresh widget snapshot
     scheduleNotifPlan();
@@ -1220,6 +1220,7 @@
       if($('settingsView') && !$('settingsView').classList.contains('hidden')){ closeSettings(); return; } // 3. settings
       if($('reportsView') && !$('reportsView').classList.contains('hidden')){ closeReports(); return; }     // 4. reports
       if($('calendarView') && !$('calendarView').classList.contains('hidden')){ closeCalendar(); return; }  // 5. calendar
+      if($('routineView') && !$('routineView').classList.contains('hidden')){ closeRoutine(); return; }     // 6. routine
       AyyamNative.exitApp();                                                        // 6. nothing → exit
     }catch(e){ try{ AyyamNative.exitApp(); }catch(_){} }
   }
@@ -1911,16 +1912,37 @@
   }
 
   // ---------- settings / template editor ----------
-  function openSettings(){
-    $('mainView').classList.add('hidden');
-    $('settingsView').classList.remove('hidden');
-    $('fabAdd').classList.add('hidden');
-    renderTplDays();
-    renderTplTasks();
-    applyPrefs();
-    updateSyncKeyInfo();
-    updateDiagInfo();
+  // ---------- unified screen switching + bottom navigation (5 base screens) ----------
+  // Same manual SPA mechanism as before (toggle `hidden` on the view containers) — just centralised so the
+  // bottom nav can jump directly between any two screens without round-tripping through Today. No reload,
+  // no app-shell rebuild: state/session/sync are untouched; only which view is visible changes.
+  const BASE_SCREENS = { today:'mainView', calendar:'calendarView', routine:'routineView', progress:'reportsView', settings:'settingsView' };
+  let currentScreen = 'today';
+  function renderScreen(name){
+    if(name==='today') render();
+    else if(name==='calendar'){ const tk=todayKey(); calYear=Number(tk.slice(0,4)); calMonth=Number(tk.slice(5,7)); renderCalWeekdays(); renderCalLegend(); renderCalendar(); track('calendar_opened'); }
+    else if(name==='routine'){ renderTplDays(); renderTplTasks(); }
+    else if(name==='progress'){ renderReports(); track('insights_opened'); }
+    else if(name==='settings'){ applyPrefs(); updateSyncKeyInfo(); updateDiagInfo(); }
   }
+  function showScreen(name){
+    if(!BASE_SCREENS[name]) name='today';
+    currentScreen = name;
+    Object.keys(BASE_SCREENS).forEach(k=>{ const el=$(BASE_SCREENS[k]); if(el) el.classList.toggle('hidden', k!==name); });
+    $('fabAdd').classList.toggle('hidden', name!=='today');   // the FAB belongs to Today only
+    try{ renderScreen(name); }catch(e){}
+    setActiveNav(name);
+    try{ window.scrollTo(0, 0); }catch(e){}
+  }
+  function setActiveNav(name){
+    const items = document.querySelectorAll('#bottomNav .bnav-item');
+    items.forEach(b=>{ const on = b.getAttribute('data-screen')===name;
+      b.classList.toggle('active', on);
+      if(on) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
+  }
+
+  function openSettings(){ showScreen('settings'); }
+  function openRoutine(){ showScreen('routine'); }
   function updateSyncKeyInfo(){
     const el = $('syncKeyInfo'); if(!el) return;
     el.textContent = getDeviceKey()
@@ -2024,12 +2046,8 @@
       const b=$('copyDiag'); if(b){ const o=b.textContent; b.textContent='تم النسخ ✓'; setTimeout(()=>{ b.textContent=o; }, 1500); }
     }catch(e){ alert('تعذّر النسخ'); }
   }
-  function closeSettings(){
-    $('settingsView').classList.add('hidden');
-    $('mainView').classList.remove('hidden');
-    $('fabAdd').classList.remove('hidden');
-    render();
-  }
+  function closeSettings(){ showScreen('today'); }
+  function closeRoutine(){ showScreen('today'); }
 
   // ---------- performance insights (I1) — pure render over AyyamAnalytics; NO analytics logic here ----------
   const INS_RANGE = { days: 30 };
@@ -2133,18 +2151,8 @@
     return '';
   }
 
-  function openReports(){
-    $('mainView').classList.add('hidden');
-    $('reportsView').classList.remove('hidden');
-    $('fabAdd').classList.add('hidden');
-    renderReports();
-    track('insights_opened');
-  }
-  function closeReports(){
-    $('reportsView').classList.add('hidden');
-    $('mainView').classList.remove('hidden');
-    $('fabAdd').classList.remove('hidden');
-  }
+  function openReports(){ showScreen('progress'); }
+  function closeReports(){ showScreen('today'); }
 
   // ---------- calendar month view (C1) — pure render over AyyamAnalytics; NO analytics logic here ----------
   const MONTH_NAMES = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
@@ -2152,19 +2160,8 @@
   let calYear = 2026, calMonth = 1, dayOverviewKey = null;
   const AN = ()=> window.AyyamAnalytics;
 
-  function openCalendar(){
-    const tk = todayKey(); calYear = Number(tk.slice(0,4)); calMonth = Number(tk.slice(5,7));
-    $('mainView').classList.add('hidden');
-    $('calendarView').classList.remove('hidden');
-    $('fabAdd').classList.add('hidden');
-    renderCalWeekdays(); renderCalLegend(); renderCalendar();
-    track('calendar_opened');
-  }
-  function closeCalendar(){
-    $('calendarView').classList.add('hidden');
-    $('mainView').classList.remove('hidden');
-    $('fabAdd').classList.remove('hidden');
-  }
+  function openCalendar(){ showScreen('calendar'); }
+  function closeCalendar(){ showScreen('today'); }
   function calShift(delta){
     let m = calMonth + delta, y = calYear;
     while(m < 1){ m += 12; y--; } while(m > 12){ m -= 12; y++; }
@@ -2387,6 +2384,9 @@
   $('closeSettings').addEventListener('click', closeSettings);
   $('tplAddTask').addEventListener('click', ()=> openAddSheet({ mode:'template', day: settingsDay }));
 
+  // routine (weekly template) screen
+  { const cr=$('closeRoutine'); if(cr) cr.addEventListener('click', closeRoutine); }
+
   // reports
   $('openReports').addEventListener('click', openReports);
   $('closeReports').addEventListener('click', closeReports);
@@ -2394,6 +2394,12 @@
   // calendar
   $('openCalendar').addEventListener('click', openCalendar);
   $('closeCalendar').addEventListener('click', closeCalendar);
+
+  // bottom navigation: switch among the 5 base screens (no reload; state/session/sync preserved)
+  document.querySelectorAll('#bottomNav .bnav-item').forEach(b=>{
+    b.addEventListener('click', ()=>{ try{ showScreen(b.getAttribute('data-screen')); }catch(e){} });
+  });
+  setActiveNav('today');
   $('calPrev').addEventListener('click', ()=> calShift(-1));
   $('calNext').addEventListener('click', ()=> calShift(1));
   $('calToday').addEventListener('click', ()=>{ const tk=todayKey(); calYear=Number(tk.slice(0,4)); calMonth=Number(tk.slice(5,7)); renderCalendar(); });
