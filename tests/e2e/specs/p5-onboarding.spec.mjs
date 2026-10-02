@@ -23,6 +23,30 @@ async function advanceToEnd(page) {
   }
 }
 
+// item 5: the tour card must stay FULLY inside the viewport on every step, with Next always visible+clickable.
+async function assertCardInViewport(page, label) {
+  const vp = page.viewportSize() || { width: 1280, height: 720 };
+  const box = await page.locator('#onbCard').boundingBox();
+  expect(box, `card has a box at ${label}`).not.toBeNull();
+  expect(box.x, `left edge in view at ${label}`).toBeGreaterThanOrEqual(-1);
+  expect(box.y, `top edge in view at ${label}`).toBeGreaterThanOrEqual(-1);
+  expect(box.x + box.width, `right edge in view at ${label}`).toBeLessThanOrEqual(vp.width + 1);
+  expect(box.y + box.height, `bottom edge in view at ${label}`).toBeLessThanOrEqual(vp.height + 1);
+  const next = page.locator('#onbNext');
+  await expect(next, `Next visible at ${label}`).toBeVisible();
+  const nb = await next.boundingBox();
+  expect(nb.y + nb.height, `Next fully on screen at ${label}`).toBeLessThanOrEqual(vp.height + 1);
+}
+
+test('the tour card stays inside the viewport with a clickable Next on EVERY step (item 5)', async ({ page }) => {
+  await signupToTour(page, 'viewport@t.test');
+  for (let i = 0; i < 8; i++) {
+    await expect(page.locator('.onb-count')).toContainText(['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨'][i]);
+    await assertCardInViewport(page, `step ${i + 1}`);
+    if (i < 7) { await page.locator('#onbNext').click(); await page.waitForTimeout(120); }  // let layout settle
+  }
+});
+
 test('a new account starts the onboarding tour with a working step counter and prev/next', async ({ page }) => {
   await signupToTour(page, 'onb@t.test');
   await expect(page.locator('.onb-count')).toContainText('٨');       // 8-step tour

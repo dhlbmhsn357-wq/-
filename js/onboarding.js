@@ -43,7 +43,7 @@
     var dots = steps.map(function (_, i) { return '<i class="onb-dot' + (i === idx ? ' on' : '') + '"></i>'; }).join('');
     var prev = idx > 0 ? '<button class="onb-btn ghost" id="onbPrev">السابق</button>' : '<span></span>';
     var next = '<button class="onb-btn primary" id="onbNext">' + (isLast ? (s.cta || 'ابدأ يومك') : 'التالي') + '</button>';
-    var card = '<div class="onb-card" id="onbCard">'
+    var card = '<div class="onb-card" id="onbCard" role="dialog" aria-modal="true" aria-label="' + esc(s.title || 'جولة تعريفية') + '" tabindex="-1">'
       + '<div class="onb-card-top">' + counter + '<button class="onb-skip" id="onbSkip">تخطّي</button></div>'
       + (s.icon ? '<div class="onb-icon">' + s.icon + '</div>' : '')
       + '<h2 class="onb-title">' + esc(s.title) + '</h2>'
@@ -53,19 +53,91 @@
       + '</div>';
     v.innerHTML = '<div class="onb-scrim"' + (r ? '' : ' data-center="1"') + '>' + holeHtml + '</div>'
       + '<div class="onb-cardwrap" id="onbCardWrap">' + card + '</div>';
-    positionCard(r);
     bindStep();
+    ensureVisibleThenLayout(s);
     if (typeof cbProgress === 'function') { try { cbProgress(idx); } catch (e) {} }
   }
 
-  // Place the card near the target (below if the target is in the top half, else above); centered if no target.
-  function positionCard(r) {
-    var wrap = $('onbCardWrap'); if (!wrap) return;
-    if (!r) { wrap.classList.add('center'); return; }
+  // If the target is off-screen, bring it into view first (controlled), then measure + position after layout.
+  function ensureVisibleThenLayout(s) {
+    var el = s && s.target ? document.querySelector(s.target) : null;
+    if (el) {
+      var r = el.getBoundingClientRect();
+      var vh = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+      if (r.bottom < 0 || r.top > vh || r.top < 0) {
+        try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' }); }
+        catch (e) { try { el.scrollIntoView(); } catch (e2) {} }
+      }
+    }
+    // measure + place after the browser has applied any scroll/layout (double rAF = post-layout)
+    requestAnimationFrame(function () { layout(); requestAnimationFrame(layout); });
+    focusCard();
+  }
+
+  function focusCard() {
+    var card = $('onbCard'); if (!card) return;
+    try { card.focus({ preventScroll: true }); } catch (e) { try { card.focus(); } catch (e2) {} }
+  }
+
+  // Robust placement: keep the card FULLY inside the (visual) viewport. Measure the card, then try to seat it
+  // below → above → right → left of the target, choosing the first side with enough room; if none fit (or the
+  // target is off-screen / absent), fall back to a centered modal. Everything is clamped to safe margins +
+  // safe-area insets on every axis, so Next/Prev/Skip are ALWAYS visible and tappable.
+  function layout() {
+    if (mode !== 'tour') return;
+    var v = view(); if (!v) return;
+    var wrap = $('onbCardWrap'); var card = $('onbCard'); if (!wrap || !card) return;
+    var s = steps[idx] || {};
+    var r = targetRect(s.target);
+    // keep the spotlight hole aligned with the (possibly scrolled) target
+    var hole = v.querySelector('.onb-hole');
+    if (hole && r) { hole.style.top = (r.top - 8) + 'px'; hole.style.left = (r.left - 8) + 'px'; hole.style.width = (r.width + 16) + 'px'; hole.style.height = (r.height + 16) + 'px'; }
+    if (!r) { centerCard(wrap); return; }
+
+    var vv = window.visualViewport;
+    var vpTop = vv ? vv.offsetTop : 0, vpLeft = vv ? vv.offsetLeft : 0;
+    var vw = vv ? vv.width : window.innerWidth, vh = vv ? vv.height : window.innerHeight;
+    var M = 14, safeTop = safeInset('top'), safeBottom = safeInset('bottom');
+    var minX = vpLeft + M, maxX = vpLeft + vw - M;
+    var minY = vpTop + M + safeTop, maxY = vpTop + vh - M - safeBottom;
+    var cw = card.offsetWidth, ch = card.offsetHeight;
+    function clampX(x) { return Math.max(minX, Math.min(x, maxX - cw)); }
+    function clampY(y) { return Math.max(minY, Math.min(y, maxY - ch)); }
+
+    // target essentially outside the usable viewport → center (keeps the card reachable)
+    if (r.bottom < minY || r.top > maxY) { centerCard(wrap); return; }
+
+    var spaceBelow = maxY - r.bottom, spaceAbove = r.top - minY;
+    var spaceRight = maxX - r.right, spaceLeft = r.left - minX;
+    var place = null;
+    if (spaceBelow >= ch + M) place = { top: r.bottom + M, left: clampX(r.left + r.width / 2 - cw / 2) };
+    else if (spaceAbove >= ch + M) place = { top: r.top - M - ch, left: clampX(r.left + r.width / 2 - cw / 2) };
+    else if (spaceRight >= cw + M) place = { left: r.right + M, top: clampY(r.top + r.height / 2 - ch / 2) };
+    else if (spaceLeft >= cw + M) place = { left: r.left - M - cw, top: clampY(r.top + r.height / 2 - ch / 2) };
+    if (!place) { centerCard(wrap); return; }
+
     wrap.classList.remove('center');
-    var vh = window.innerHeight, below = r.bottom + 14, above = r.top - 14;
-    if (r.top < vh * 0.5) { wrap.style.top = below + 'px'; wrap.style.bottom = 'auto'; }
-    else { wrap.style.top = 'auto'; wrap.style.bottom = (vh - above) + 'px'; }
+    wrap.classList.add('pos');
+    wrap.style.width = cw + 'px';
+    wrap.style.left = clampX(place.left) + 'px';
+    wrap.style.top = clampY(place.top) + 'px';
+    wrap.style.right = 'auto'; wrap.style.bottom = 'auto';
+  }
+  function centerCard(wrap) {
+    wrap.classList.remove('pos');
+    wrap.classList.add('center');
+    wrap.style.top = ''; wrap.style.left = ''; wrap.style.right = ''; wrap.style.bottom = ''; wrap.style.width = '';
+  }
+  // Read a CSS env(safe-area-inset-*) value in px (0 when unsupported) — notch / status / nav insets.
+  function safeInset(side) {
+    try {
+      var probe = document.createElement('div');
+      probe.style.cssText = 'position:fixed;height:env(safe-area-inset-' + side + ',0px);width:0;visibility:hidden;pointer-events:none;';
+      document.body.appendChild(probe);
+      var px = probe.getBoundingClientRect().height || 0;
+      document.body.removeChild(probe);
+      return px;
+    } catch (e) { return 0; }
   }
 
   function bindStep() {
@@ -76,10 +148,39 @@
     var skip = $('onbSkip'); if (skip) skip.addEventListener('click', function () { finish('skipped'); });
   }
 
-  var onResize = function () { if (mode === 'tour') { var s = steps[idx] || {}; positionCard(targetRect(s.target)); var v = view(); if (v) { var hole = v.querySelector('.onb-hole'); var r = targetRect(s.target); if (hole && r) { hole.style.top = (r.top - 8) + 'px'; hole.style.left = (r.left - 8) + 'px'; hole.style.width = (r.width + 16) + 'px'; hole.style.height = (r.height + 16) + 'px'; } } } };
+  var onResize = function () { if (mode === 'tour') layout(); };
+  var onKey = function (e) {
+    if (mode !== 'tour') return;
+    if (e.key === 'Escape') { e.preventDefault(); finish('skipped'); return; }
+    if (e.key === 'Tab') { trapTab(e); }
+  };
+  // Simple focus trap: keep keyboard focus inside the card (a11y).
+  function trapTab(e) {
+    var card = $('onbCard'); if (!card) return;
+    var f = card.querySelectorAll('button, [href], input, [tabindex]:not([tabindex="-1"])');
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+
+  function addListeners() {
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    window.addEventListener('scroll', onResize, true);
+    document.addEventListener('keydown', onKey, true);
+    if (window.visualViewport) { window.visualViewport.addEventListener('resize', onResize); window.visualViewport.addEventListener('scroll', onResize); }
+  }
+  function removeListeners() {
+    window.removeEventListener('resize', onResize);
+    window.removeEventListener('orientationchange', onResize);
+    window.removeEventListener('scroll', onResize, true);
+    document.removeEventListener('keydown', onKey, true);
+    if (window.visualViewport) { window.visualViewport.removeEventListener('resize', onResize); window.visualViewport.removeEventListener('scroll', onResize); }
+  }
 
   function finish(via) {
-    window.removeEventListener('resize', onResize);
+    removeListeners();
     var done = cbDone; mode = null;
     hideView();
     if (typeof done === 'function') { try { done(via); } catch (e) {} }
@@ -91,7 +192,7 @@
     idx = Math.min(Math.max(opts.startStep || 0, 0), steps.length - 1);
     cbProgress = opts.onProgress; cbDone = opts.onDone; mode = 'tour';
     show();
-    window.addEventListener('resize', onResize);
+    addListeners();
     renderStep();
   }
 
@@ -136,7 +237,7 @@
   }
 
   function isOpen() { var v = view(); return !!(v && !v.classList.contains('hidden')); }
-  function close() { window.removeEventListener('resize', onResize); mode = null; hideView(); }
+  function close() { removeListeners(); mode = null; hideView(); }
   // Android hardware Back: in the tour, step back if possible, else exit (counts as skip); on the starter, skip.
   function back() {
     if (mode === 'tour') { if (idx > 0) { idx--; renderStep(); } else { finish('skipped'); } return true; }

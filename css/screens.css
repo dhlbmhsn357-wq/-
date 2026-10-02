@@ -115,6 +115,16 @@
 .set-hint{color:var(--color-text-secondary);font-size:13px;line-height:1.7;margin:0;}
 .tpl-day-btn{min-height:40px;border-radius:var(--radius-pill);}
 .tpl-day-btn.active{border-color:var(--color-primary);}
+/* settings: a label + control row (used by the simplified Appearance section) */
+.set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.set-row-label{font-size:14px;color:var(--color-text);}
+/* admin entry (item 7): a clear, full-width primary action inside the admin-only section */
+.admin-open{width:100%;}
+/* manual update-check feedback (item 1) */
+.update-check-msg{font-size:13px;line-height:1.7;}
+.update-check-msg.is-ok{color:var(--color-success);}
+.update-check-msg.is-err{color:var(--color-danger);}
+.update-check-msg.is-info{color:var(--color-text-secondary);}
 
 /* ---------- Empty states (shared) ---------- */
 .empty-title{font-family:var(--font-ui);}

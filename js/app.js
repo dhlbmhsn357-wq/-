@@ -718,8 +718,11 @@
   function enableAdmin(){
     if(adminEnabled) return; adminEnabled = true;
     try{ if(globalThis.AyyamAdmin) globalThis.AyyamAdmin.init({ call: (fn,args)=> rpc(fn,args) }); }catch(e){}
+    const sec = $('adminSection'); if(sec) sec.classList.remove('hidden');   // reveal the admin-only section
     const slot = $('adminEntry');
-    if(slot){ slot.innerHTML = '<button class="btn ghost acct-open" id="openAdmin" style="margin-top:10px;">لوحة التحكم</button>';
+    if(slot){ slot.innerHTML =
+        '<p class="report-hint" style="margin-top:0;">لديك صلاحية إدارية. افتح لوحة الإدارة لعرض إحصاءات المنتج العامة وقائمة المستخدمين.</p>'
+      + '<button class="btn primary admin-open" id="openAdmin" style="margin-top:12px;">فتح لوحة الإدارة</button>';
       const b=$('openAdmin'); if(b) b.addEventListener('click', openAdmin); }
     window.addEventListener('hashchange', hashAdminMaybe);
     hashAdminMaybe();
@@ -1012,7 +1015,7 @@
     );
     document.documentElement.style.setProperty('--bg-blur', prefs.bgBlur+'px');
 
-    Array.from(document.querySelectorAll('#themeToggle button')).forEach(b=>{
+    Array.from(document.querySelectorAll('#themeToggle button, #themeToggleSettings button')).forEach(b=>{
       b.classList.toggle('active', b.dataset.theme===prefs.theme);
     });
     const bgToggle = document.getElementById('bgToggle');
@@ -2398,7 +2401,6 @@
   $('dayNext').addEventListener('click', ()=>{ if(dayOverviewKey) openDayOverview(AyyamTime.addDays(dayOverviewKey,1)); });
   $('dayClose').addEventListener('click', closeDayOverview);
   $('dayOverlay').addEventListener('click', (e)=>{ if(e.target.id==='dayOverlay') closeDayOverview(); });
-  { const cd = $('copyDiag'); if(cd) cd.addEventListener('click', copyDiag); }
 
   // theme toggle (main header)
   $('themeToggle').addEventListener('click', (e)=>{
@@ -2409,22 +2411,13 @@
     applyPrefs();
   });
 
-  // appearance controls (in settings)
-  $('bgToggle').addEventListener('change', (e)=>{
-    prefs.bgOn = e.target.checked;
-    savePrefs(prefs);
-    applyPrefs();
-  });
-  $('bgOpacity').addEventListener('input', (e)=>{
-    prefs.bgOpacity = parseInt(e.target.value,10);
-    savePrefs(prefs);
-    applyPrefs();
-  });
-  $('bgBlur').addEventListener('input', (e)=>{
-    prefs.bgBlur = parseInt(e.target.value,10);
-    savePrefs(prefs);
-    applyPrefs();
-  });
+  // appearance: theme selector in Settings. Background customization (bgOn/bgOpacity/bgBlur) was retired
+  // from the UI; those prefs stay in the model (sanitizeBundle/applyPrefs) for backward-compatibility and are
+  // applied with their stored/default values, so existing users' data never breaks.
+  { const tt = $('themeToggleSettings'); if(tt) tt.addEventListener('click', (e)=>{
+      const btn = e.target.closest('button[data-theme]'); if(!btn) return;
+      prefs.theme = btn.dataset.theme; savePrefs(prefs); applyPrefs();
+    }); }
 
   // ---------- prayer-times location ----------
   // Reminders are computed on the server from the last saved location, so keep it current:
@@ -2501,58 +2494,10 @@
   $('useMyLocation').addEventListener('click', ()=> refreshLocation(true));
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') autoRefreshLocation(); });
 
-  // data management
-  $('exportData').addEventListener('click', ()=>{
-    const backup = {...currentBundle(), exportedAt: new Date().toISOString()};
-    const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'ayyam-backup-' + dateKey(new Date()) + '.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(()=> URL.revokeObjectURL(url), 1000); // revoking synchronously can cancel the download on some browsers
-  });
-
-  // Restore a backup file produced by "export". The file is validated like server data;
-  // the restored state then syncs to the server like any other edit.
-  $('importData').addEventListener('click', ()=> $('importFile').click());
-  $('importFile').addEventListener('change', async (e)=>{
-    const file = e.target.files && e.target.files[0];
-    e.target.value = ''; // allow choosing the same file again later
-    if(!file) return;
-    let raw;
-    try{ raw = JSON.parse(await file.text()); }catch(err){ raw = null; }
-    if(!isObj(raw) || !isObj(raw.template) || !isObj(raw.logs)){
-      alert('هذا الملف ليس نسخة احتياطية صالحة من تطبيق أيام.');
-      return;
-    }
-    const restored = sanitizeBundle(raw);
-    const days = Object.keys(restored.logs).length;
-    const when = typeof raw.exportedAt==='string' ? new Date(raw.exportedAt) : null;
-    const whenTxt = when && !isNaN(when) ? ' (بتاريخ ' + when.toLocaleDateString('ar-EG') + ')' : '';
-    if(!confirm(`استرجاع النسخة الاحتياطية${whenTxt}؟\nتحتوي على سجل ${toArabicNum(days)} يوم.\nسيتم استبدال بياناتك الحالية بالكامل.`)) return;
-    setState(restored);
-    saveBundle('import'); // new generation: fences older devices from re-adding replaced data
-    applyPrefs();
-    renderTplDays();
-    renderTplTasks();
-    alert('تم استرجاع النسخة الاحتياطية.');
-  });
-  $('resetData').addEventListener('click', ()=>{
-    const ok = confirm('سيتم حذف كل المهام والسجلات والعودة للقالب الافتراضي. هل أنت متأكد؟');
-    if(!ok) return;
-    template = defaultTemplate();
-    logs = {};
-    tplArchive = { since: EPOCH_KEY, versions: [] };
-    routines = {};
-    migrationDate = '';
-    saveBundle('reset'); // new generation: a stale offline device can't bring the old data back
-    renderTplDays();
-    renderTplTasks();
-    closeSettings();
-  });
+  // Data management (export / import backup / reset-all) was retired from the public Settings UI (item 4):
+  // end users don't need these controls, and "reset all" must not sit one tap away. The sync engine,
+  // IndexedDB, outbox, snapshots, restore + migration internals are UNCHANGED — only the UI entry points are
+  // gone. currentBundle/sanitizeBundle/setState/saveBundle still exist for the sync/migration paths.
 
   // ---------- Android direct-APK updater (native only) ----------
   // Shows the SAME compact "#updateBanner" pill the web SW-update flow uses. On Android the pill opens an
@@ -2626,6 +2571,53 @@
     pendingUpdate = manifest; updateAction = runAndroidUpdate;
     if(!updateProgressWired){ updateProgressWired=true; try{ AyyamNative.updater.onProgress((ev)=> showUpdateProgress((ev&&ev.percent)||0)); }catch(e){} }
     showUpdatePill(openUpdateSheet);
+  }
+  // MANUAL update check (the Settings button, item 1). Unlike the throttled background checkNativeUpdate(),
+  // this ALWAYS runs (no shouldCheck gate), ALWAYS gives clear feedback, shows a loading state, and guards
+  // against repeated taps while a check is in flight. Decisions come from AyyamUpdate.evaluateUpdate (pure).
+  let updateCheckInFlight = false;
+  function setUpdateCheckMsg(text, kind){
+    const el=$('updateCheckMsg'); if(!el) return;
+    el.textContent = text || '';
+    el.classList.remove('is-err','is-ok','is-info');
+    if(kind) el.classList.add('is-'+kind);
+    el.classList.toggle('hidden', !text);
+  }
+  async function manualUpdateCheck(){
+    if(updateCheckInFlight) return;                              // repeated clicks while loading → ignored
+    if(!(NATIVE && AyyamNative.updaterConfigured && AyyamNative.updaterConfigured())){
+      setUpdateCheckMsg('التحقق من التحديثات متاح على تطبيق أندرويد.', 'info'); return;
+    }
+    updateCheckInFlight = true;
+    const btn=$('checkUpdateBtn'); const orig = btn ? btn.textContent : '';
+    if(btn){ btn.disabled=true; btn.setAttribute('aria-busy','true'); btn.textContent='جارٍ التحقق…'; }
+    setUpdateCheckMsg('جارٍ التحقق من وجود تحديث…', 'info');
+    let res = { ok:false };
+    try{
+      if(navigator.onLine === false) throw new Error('offline');
+      const r = await fetch(UPDATE_MANIFEST_URL, { cache:'no-store' });
+      if(!r.ok) throw new Error('http '+r.status);
+      const text = await r.text();
+      let installed=null; try{ const info=await AyyamNative.appInfo(); installed=info&&info.build; }catch(e){}
+      res = { ok:true, text, installedVersionCode: installed };
+      try{ localStorage.setItem(LS_UPDATE_CHECK, String(Date.now())); }catch(e){}
+    }catch(e){ res = { ok:false, error:(e&&e.message)||'error' }; }
+    const verdict = AyyamUpdate.evaluateUpdate(res);
+    if(btn){ btn.disabled=false; btn.removeAttribute('aria-busy'); btn.textContent=orig||'التحقق من وجود تحديث'; }
+    updateCheckInFlight = false;
+    if(verdict.outcome==='available'){
+      setUpdateCheckMsg('', '');
+      pendingUpdate = verdict.manifest; updateAction = runAndroidUpdate;
+      if(!updateProgressWired){ updateProgressWired=true; try{ AyyamNative.updater.onProgress((ev)=> showUpdateProgress((ev&&ev.percent)||0)); }catch(e){} }
+      openUpdateSheet();                                         // version + release notes + «تحديث الآن»/«لاحقًا»
+    } else if(verdict.outcome==='latest'){
+      setUpdateCheckMsg('أنت تستخدم أحدث إصدار من أيام.', 'ok');
+    } else if(verdict.outcome==='malformed'){
+      try{ store && store.logDiag && store.logDiag({ type:'update-manifest-invalid' }); }catch(e){}   // internal diagnostic only — never a raw error to the user
+      setUpdateCheckMsg('تعذّر التحقق من وجود تحديث الآن. حاول مرة أخرى لاحقًا.', 'err');
+    } else {
+      setUpdateCheckMsg('تعذر التحقق من وجود تحديث. تحقق من الاتصال وحاول مرة أخرى.', 'err');
+    }
   }
   function setupUpdateSheet(){
     const cl=$('updateClose'); if(cl) cl.addEventListener('click', closeUpdateSheet);
@@ -2965,7 +2957,7 @@
   try{
     const av = $('appVersionInfo'); if(av) av.textContent = 'أيام · الإصدار ' + APP_VERSION + (NATIVE ? ' — أندرويد' : ' — ويب');
     if(NATIVE){ const ur=$('appUpdateRow'); if(ur) ur.classList.remove('hidden');
-      const cb=$('checkUpdateBtn'); if(cb) cb.addEventListener('click', ()=>{ try{ checkNativeUpdate(); }catch(e){} }); }
+      const cb=$('checkUpdateBtn'); if(cb) cb.addEventListener('click', ()=>{ try{ manualUpdateCheck(); }catch(e){} }); }
   }catch(e){}
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
   scheduleNotifPlan();  // seed the local reminder plan

@@ -60,5 +60,21 @@
     return typeof a === 'string' && typeof b === 'string' && SHA256_RE.test(a) && a.toLowerCase() === String(b).toLowerCase();
   }
 
-  global.AyyamUpdate = { parseManifest, isUpdateAvailable, shouldCheck, shaMatches, normalizeNotes, DEFAULT_INTERVAL };
+  // Classify the OUTCOME of a MANUAL update check from the raw fetch result + the installed build, so a
+  // tapped "check for update" button can always give deterministic, non-silent feedback. Pure (no I/O):
+  //   { ok:false }                → 'network'   (request failed / offline)
+  //   ok but text not a manifest  → 'malformed' (invalid/partial metadata — caller shows a safe message,
+  //                                              logs a diagnostic internally, never a raw error)
+  //   valid manifest, not newer   → 'latest'
+  //   valid manifest, newer       → 'available' (+ manifest)
+  function evaluateUpdate(res) {
+    res = res || {};
+    if (!res.ok) return { outcome: 'network' };
+    const manifest = parseManifest(res.text);
+    if (!manifest) return { outcome: 'malformed' };
+    if (!isUpdateAvailable(manifest, res.installedVersionCode)) return { outcome: 'latest' };
+    return { outcome: 'available', manifest };
+  }
+
+  global.AyyamUpdate = { parseManifest, isUpdateAvailable, shouldCheck, shaMatches, normalizeNotes, evaluateUpdate, DEFAULT_INTERVAL };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
