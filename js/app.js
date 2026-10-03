@@ -93,7 +93,12 @@
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
   // never opens GitHub — the app fetches this JSON directly. A Play build ignores this (Play In-App Updates).
   // See js/update-model.js (validation) and update.json in the repo (format example).
-  const UPDATE_MANIFEST_URL = 'https://github.com/dhlbmhsn357-wq/-/releases/latest/download/update.json';
+  // Same-domain updater endpoint (Vercel function at /update.json → proxies GitHub's latest manifest WITH
+  // CORS headers). The native WebView (origin https://localhost) is cross-origin to GitHub and GitHub's
+  // release assets return no Access-Control-Allow-Origin, so a direct fetch was CORS-blocked and misreported
+  // as "no connection". This endpoint returns Access-Control-Allow-Origin:* so the WebView fetch succeeds.
+  // The apkUrl inside the manifest stays a GitHub link (the native UpdaterBridge downloads it directly).
+  const UPDATE_MANIFEST_URL = 'https://daily-six-woad.vercel.app/update.json';
   const LS_UPDATE_CHECK = 'ayyam_update_check_v1';
   // Check for updates soon after any app open (not once per 6h): a 20-min throttle prevents abuse while never
   // hiding a published update for long. Used for the native APK check; the web SW checks on load + on focus.
@@ -2624,9 +2629,11 @@
     if(btn){ btn.disabled=true; btn.setAttribute('aria-busy','true'); btn.textContent='جارٍ التحقق…'; }
     setUpdateCheckMsg('جارٍ التحقق من وجود تحديث…', 'info');
     let res = { ok:false, reachable:false };
+    const diag = { type:'update-check', url: UPDATE_MANIFEST_URL }; // INTERNAL diagnostics only (never shown)
     try{
       if(navigator.onLine === false) throw new Error('offline'); // reachable stays false → 'network'
       const r = await fetch(UPDATE_MANIFEST_URL, { cache:'no-store' });
+      diag.status = r.status; diag.finalUrl = r.url; diag.redirected = r.redirected;
       if(!r.ok){ res = { ok:false, reachable:true, status:r.status }; }  // server reached, but no/again manifest → 'unavailable'
       else {
         const text = await r.text();
@@ -2634,8 +2641,9 @@
         res = { ok:true, text, installedVersionCode: installed };
         try{ localStorage.setItem(LS_UPDATE_CHECK, String(Date.now())); }catch(e){}
       }
-    }catch(e){ res = { ok:false, reachable:false, error:(e&&e.message)||'error' }; } // offline / DNS / timeout
+    }catch(e){ res = { ok:false, reachable:false, error:(e&&e.message)||'error' }; diag.errorType = (e&&e.name)||'err'; diag.errorMsg = (e&&e.message)||'err'; } // offline / DNS / timeout / CORS
     const verdict = AyyamUpdate.evaluateUpdate(res);
+    try{ store && store.logDiag && store.logDiag({ ...diag, outcome: verdict.outcome }); }catch(e){}
     if(btn){ btn.disabled=false; btn.removeAttribute('aria-busy'); btn.textContent=orig||'التحقق من وجود تحديث'; }
     updateCheckInFlight = false;
     if(verdict.outcome==='available'){
