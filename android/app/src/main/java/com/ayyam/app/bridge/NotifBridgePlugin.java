@@ -1,7 +1,10 @@
 package com.ayyam.app.bridge;
 
 import android.Manifest;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
+import android.provider.Settings;
 
 import androidx.core.app.NotificationManagerCompat;
 
@@ -69,5 +72,25 @@ public class NotifBridgePlugin extends Plugin {
     @PermissionCallback
     private void permCb(PluginCall call) {
         JSObject r = new JSObject(); r.put("permission", perm()); call.resolve(r);
+    }
+
+    /** Open the OS notification settings for this app (used when notifications are blocked at system level). */
+    @PluginMethod
+    public void openSettings(PluginCall call) {
+        try {
+            Intent i;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+            } else {
+                i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.fromParts("package", getContext().getPackageName(), null));
+            }
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            JSObject r = new JSObject(); r.put("ok", true); call.resolve(r);
+        } catch (Exception e) {
+            call.reject("cannot open settings");
+        }
     }
 }

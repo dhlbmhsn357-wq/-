@@ -47,6 +47,7 @@ public final class NotifScheduler {
         if (!forCancel) {
             i.putExtra("id", item.optString("id", ""));
             i.putExtra("date", item.optString("date", ""));
+            i.putExtra("at", item.optLong("at", 0)); // intended fire time (absolute ms) — tz-independent stale guard
             i.putExtra("title", item.optString("title", ""));
             i.putExtra("body", item.optString("body", ""));
         }

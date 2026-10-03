@@ -252,7 +252,7 @@
     }
   }
 
-  function defaultPrefs(){ return {theme:'night', bgOn:true, bgOpacity:72, bgBlur:0, location:null, dayTimezone:''}; }
+  function defaultPrefs(){ return {theme:'night', bgOn:false, bgOpacity:72, bgBlur:0, location:null, dayTimezone:''}; } // bgOn OFF by default (clean start); explicit prefs preserved by sanitize
 
   // ---------- data validation ----------
   // Everything read from the server or localStorage goes through here, so a single bad
@@ -1261,14 +1261,58 @@
   // Mark the bell as "reminders on" cleanly — keep the SVG icon, just flag the state (CSS colours it + adds a
   // small dot). Never replace the icon with emoji text (that looked like a stray checkmark under the bell).
   function markNotifEnabled(){ const b=$('notifyBtn'); if(b){ b.classList.add('notif-on'); b.setAttribute('aria-label','التذكيرات مفعّلة'); } }
+  function markNotifDisabled(){ const b=$('notifyBtn'); if(b){ b.classList.remove('notif-on'); b.setAttribute('aria-label','تفعيل الإشعارات'); } }
+  // Lightweight, dismissable status toast (elegant feedback — replaces blocking alerts for notifications).
+  let _toastTimer=null;
+  function toast(msg, opts){
+    opts = opts||{};
+    let el = document.getElementById('ayToast');
+    if(!el){ el=document.createElement('div'); el.id='ayToast'; el.className='ay-toast'; el.setAttribute('role','status'); el.setAttribute('aria-live','polite'); document.body.appendChild(el); }
+    el.innerHTML=''; el.classList.remove('kind-ok','kind-err','kind-info'); if(opts.kind) el.classList.add('kind-'+opts.kind);
+    const span=document.createElement('span'); span.className='ay-toast-msg'; span.textContent=msg; el.appendChild(span);
+    if(opts.action && typeof opts.onAction==='function'){
+      const btn=document.createElement('button'); btn.type='button'; btn.className='ay-toast-act'; btn.textContent=opts.action;
+      btn.addEventListener('click', ()=>{ try{ opts.onAction(); }catch(e){} hideToast(); });
+      el.appendChild(btn);
+    }
+    el.classList.add('show');
+    clearTimeout(_toastTimer); _toastTimer=setTimeout(hideToast, opts.action ? 8000 : 3800);
+  }
+  function hideToast(){ const el=document.getElementById('ayToast'); if(el) el.classList.remove('show'); }
+
+  // Native (Android) bell: request POST_NOTIFICATIONS, then build + schedule the plan. "تم تفعيل الإشعارات"
+  // appears ONLY when permission is granted AND the plan was actually handed to the OS scheduler. On a
+  // denial/system-block it offers a one-tap route to the OS notification settings. Internal diagnostics only.
   async function enableLocalNotifs(){
+    const b=$('notifyBtn'); if(b) b.disabled=true;
+    const diag={ type:'local-notifs' };
     try{
       const r = await AyyamNative.requestNotifPermission();
-      if(!r || r.permission!=='granted'){ alert('لتصلك تذكيرات مهامك مع كل صلاة، فعّل إذن الإشعارات من إعدادات التطبيق ثم اضغط 🔔 مرة أخرى.'); return; }
-      pushNotifPlanNow(); // schedule now that notifications can be shown
-      markNotifEnabled();
-      if(store) store.logDiag({ type:'local-notifs-enabled' });
-    }catch(e){ alert('تعذّر تفعيل التذكيرات. حاول لاحقًا.'); }
+      diag.permission = r && r.permission;
+      if(!r || r.permission!=='granted'){
+        markNotifDisabled();
+        toast('لم يتم السماح بالإشعارات.', { kind:'err', action:'فتح الإعدادات', onAction:()=>{ try{ AyyamNative.openNotifSettings(); }catch(e){} } });
+        if(store) store.logDiag({ ...diag, outcome:'denied' });
+        return;
+      }
+      // granted → build the plan and hand it to the native scheduler; only claim success if that worked.
+      const plan = (typeof AyyamNotif!=='undefined') ? AyyamNotif.buildPlan(currentBundle(), { now: Date.now(), days: 3 }) : null;
+      const res = plan ? await AyyamNative.setNotifPlan(plan) : { ok:false };
+      const scheduled = res && (res.scheduled|0); diag.scheduled = scheduled; diag.planOk = !!(res && res.ok);
+      if(res && res.ok){
+        markNotifEnabled();
+        toast(scheduled>0 ? 'تم تفعيل الإشعارات، وجُدِّدت تذكيراتك.' : 'تم تفعيل الإشعارات. ستصلك التذكيرات عند وجود مهام في مواعيدها.', { kind:'ok' });
+        if(store) store.logDiag({ ...diag, outcome:'enabled' });
+      } else {
+        markNotifEnabled(); // permission is on; scheduling will retry on next render/resume
+        toast('تم السماح بالإشعارات، لكن تعذّرت جدولة التذكيرات الآن — سنعيد المحاولة تلقائيًا.', { kind:'err' });
+        if(store) store.logDiag({ ...diag, outcome:'granted-no-schedule' });
+      }
+    }catch(e){
+      diag.error=(e&&e.name)||'err';
+      toast('تعذّر تفعيل التذكيرات. حاول لاحقًا.', { kind:'err' });
+      if(store) store.logDiag({ ...diag, outcome:'error' });
+    }finally{ if(b) b.disabled=false; }
   }
 
   function toArabicNum(n){
@@ -1371,13 +1415,23 @@
     const wStart = startOfWeek(selectedDate);
     const firstDay = parseKey(firstActiveKey());
     let weekTasks = [];
+    // Weekly % = all completed / all counted across the FULL Sat→Fri week (future days of the week are
+    // included on purpose — otherwise on Saturday the week collapses to "today only"). Days before the app
+    // was first used are still skipped (no tasks existed then); empty days contribute 0/0 (no distortion).
+    const weekKeys = [];
     for(let i=0;i<7;i++){
       const d = new Date(wStart); d.setDate(wStart.getDate()+i);
-      if(dateKey(d) > todayKey()) continue; // don't count future days in week avg
-      if(d < firstDay) continue;   // nor days before the app was used
-      weekTasks = weekTasks.concat(tasksForDate(d));
+      if(d < firstDay) continue;   // skip days before the app was ever used (no real tasks then)
+      weekKeys.push(dateKey(d));
     }
-    $('statWeek').textContent = toArabicNum(pct(weekTasks))+'٪';
+    let weekPct;
+    if(typeof AyyamRoutines!=='undefined' && AyyamRoutines.rangeCounts){
+      weekPct = AyyamRoutines.rangeCounts(currentBundle(), weekKeys).pct; // shared, unit-tested counts
+    } else {
+      for(const k of weekKeys) weekTasks = weekTasks.concat(tasksForDate(k));
+      weekPct = pct(weekTasks);
+    }
+    $('statWeek').textContent = toArabicNum(weekPct)+'٪';
 
     // streak: consecutive 100% days. Today counts once it's complete; while it's still
     // in progress the streak is counted up to yesterday instead of dropping to zero.
@@ -2801,6 +2855,7 @@
         return;
       }
       markNotifEnabled();
+      toast('تم تفعيل الإشعارات.', { kind:'ok' });
       autoRefreshLocation();
     }
 
@@ -2818,8 +2873,7 @@
       $('notifyBtn').classList.remove('hidden');
       const existing = await getExistingPushSubscription();
       if(existing && subscriptionMatchesKey(existing)){
-        $('notifyBtn').textContent = '🔔✓';
-        $('notifyBtn').setAttribute('aria-label','الإشعارات مفعّلة');
+        markNotifEnabled(); // elegant active state (no hanging ✓ glyph)
       }
       $('notifyBtn').addEventListener('click', subscribeToPush);
     }
