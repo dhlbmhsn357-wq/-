@@ -285,11 +285,31 @@
     return out;
   }
 
+  // ---------- progress counts (shared by the Today + Week hero cards) ----------
+  // Completed/total "effective" occurrences for ONE day — same semantics the Today card uses: every
+  // occurrence tasksForDate returns is counted in `total`, and in `completed` iff it is done. Hidden/
+  // deleted occurrences are already excluded upstream by tasksForDate; excused/replaced follow the
+  // existing Today behaviour (they remain in `total`, done-only in `completed`) so Today and Week agree.
+  function dayCounts(bundle, dateKey) {
+    const tasks = tasksForDate(bundle, dateKey);
+    let completed = 0;
+    for (const t of tasks) if (t && t.done) completed++;
+    return { completed, total: tasks.length };
+  }
+  // Sum dayCounts over an array of day keys (e.g. the 7 Saturday→Friday keys of the week). An empty day
+  // (no occurrences) adds 0 to both, so it never distorts the ratio. pct is rounded; 0 when total is 0.
+  function rangeCounts(bundle, dateKeys) {
+    let completed = 0, total = 0;
+    const keys = Array.isArray(dateKeys) ? dateKeys : [];
+    for (const k of keys) { const c = dayCounts(bundle, k); completed += c.completed; total += c.total; }
+    return { completed, total, pct: total > 0 ? Math.round((completed / total) * 100) : 0 };
+  }
+
   global.AyyamRoutines = {
     DAY_CODES, PERIODS, FREQS, OPEN,
     cleanRec, cleanRoutine, cleanRoutines,
     recAppliesOn, occurrencesForDate, legacyTemplateFor, legacyBase, applyLog, readLog, tasksForDate,
     statusOf, replId, setExcused, clearExcused, setReplacement, clearReplacement,
-    segId, splitRoutine, endRoutine, migrate,
+    segId, splitRoutine, endRoutine, migrate, dayCounts, rangeCounts,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -13,19 +13,25 @@ import com.ayyam.app.MainActivity;
 import com.ayyam.app.R;
 
 /**
- * Fires a local reminder. STALE GUARD: only shows if the item's date is TODAY (device-local) — never
- * surfaces yesterday's tasks as today's. Tap opens ayyam://today. No network, no data read.
+ * Fires a local reminder. STALE GUARD (timezone-independent): skip only if the alarm is firing far later
+ * than its intended time — e.g. a Doze-deferred alarm surfacing hours after its prayer window. This avoids
+ * the previous device-timezone date-key comparison, which could silently drop valid reminders when the
+ * device timezone differed from the user's configured prayer-time location timezone. Tap opens ayyam://today.
+ * No network, no data read.
  */
 public class NotifAlarmReceiver extends BroadcastReceiver {
+    // Don't surface a reminder more than this late (its prayer window has clearly passed).
+    private static final long MAX_LATE_MS = 2L * 60L * 60L * 1000L; // 2 hours
+
     @Override
     public void onReceive(Context context, Intent intent) {
         final String id = intent.getStringExtra("id");
-        final String date = intent.getStringExtra("date");
+        final long at = intent.getLongExtra("at", 0L);
         final String title = intent.getStringExtra("title");
         final String body = intent.getStringExtra("body");
         if (title == null || body == null) return;
-        // stale guard: don't show a reminder for a different day than today
-        if (date == null || !date.equals(NotifScheduler.todayKey())) return;
+        // stale guard: skip an alarm that fires far after its intended moment (timezone-independent)
+        if (at > 0 && System.currentTimeMillis() - at > MAX_LATE_MS) return;
 
         NotifScheduler.ensureChannel(context);
         int req = (id != null ? id : title).hashCode();

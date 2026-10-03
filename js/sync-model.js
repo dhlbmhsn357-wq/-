@@ -66,7 +66,9 @@
     }
     return r;
   }
-  function defaultPrefs() { return { theme: 'night', bgOn: true, bgOpacity: 72, bgBlur: 0, location: null, dayTimezone: '' }; }
+  // New users start on a CLEAN themed background (no image). bgOn defaults OFF; a user's explicit saved
+  // preference is still honoured by sanitize (so existing users who turned it on keep it).
+  function defaultPrefs() { return { theme: 'night', bgOn: false, bgOpacity: 72, bgBlur: 0, location: null, dayTimezone: '' }; }
 
   // Recurring-routine segment record (see js/routines-model.js). Sanitized here too so it survives the
   // flatten/enrich/materialize round-trip; empty by default so existing data is untouched.
@@ -109,7 +111,7 @@
     const p = isObj(src.prefs) ? src.prefs : {};
     const d = defaultPrefs();
     const num = (v, min, max, def) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def);
-    const prefs = { theme: p.theme === 'day' ? 'day' : 'night', bgOn: typeof p.bgOn === 'boolean' ? p.bgOn : d.bgOn,
+    const prefs = { theme: p.theme === 'day' ? 'day' : 'night', bgOn: false, // background feature retired; coerce legacy bgOn:true → false
                     bgOpacity: num(p.bgOpacity, 30, 95, d.bgOpacity), bgBlur: num(p.bgBlur, 0, 10, d.bgBlur), location: cleanLocation(p.location),
                     dayTimezone: typeof p.dayTimezone === 'string' ? p.dayTimezone : '' };
     const a = isObj(src.tplArchive) ? src.tplArchive : {};

@@ -134,6 +134,11 @@
       const NB = plugin('NotifBridge'); if (!isNativeAndroid() || !NB) return { permission: 'unsupported' };
       try { return await NB.requestPermission(); } catch (e) { return { permission: 'unknown' }; }
     },
+    // Opens the OS notification settings for Ayyam (used when notifications are blocked at the system level).
+    async openNotifSettings() {
+      const NB = plugin('NotifBridge'); if (!isNativeAndroid() || !NB || typeof NB.openSettings !== 'function') return { ok: false };
+      try { await NB.openSettings(); return { ok: true }; } catch (e) { return { ok: false }; }
+    },
     // ---- One-shot device location (prayer-time reminders). Native path via LocationBridge; never at startup. ----
     hasNativeLocation() { return isNativeAndroid() && !!plugin('LocationBridge'); },
     location: {
