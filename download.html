@@ -4,83 +4,110 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>تحميل أيام</title>
-<meta name="theme-color" content="#12161c">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#f3ead6">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <style>
   :root{
-    --bg:#0e1217; --bg2:#12161c; --card:#171c24; --line:#232a34;
-    --ink:#f2f5f9; --muted:#9aa6b2; --accent:#4cc3a5; --accent2:#3aa88d; --ring:rgba(76,195,165,.35);
-    --radius:20px; --shadow:0 20px 50px rgba(0,0,0,.45);
+    --ivory:#f6efe0; --ivory2:#efe4cf; --card:#fffdf8; --ink:#2b2318; --muted:#8a7d66;
+    --gold:#c79a3e; --gold-deep:#a97f2d; --line:#e6d9bf; --shadow:0 24px 60px rgba(90,70,30,.16);
+    --radius:22px;
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
   body{
     font-family:system-ui,-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;
-    background:radial-gradient(1200px 600px at 50% -10%, #1a222c 0%, var(--bg) 60%) no-repeat, var(--bg);
-    color:var(--ink); min-height:100dvh; display:flex; align-items:center; justify-content:center;
-    padding:calc(28px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
-    line-height:1.7; -webkit-text-size-adjust:100%;
+    background:radial-gradient(1100px 520px at 50% -8%, #fffaf0 0%, var(--ivory) 58%) no-repeat, var(--ivory);
+    color:var(--ink); min-height:100dvh; line-height:1.75; -webkit-text-size-adjust:100%;
+    padding:calc(26px + env(safe-area-inset-top)) 16px calc(30px + env(safe-area-inset-bottom));
+    display:flex; align-items:flex-start; justify-content:center;
   }
-  .wrap{width:100%; max-width:440px}
-  .card{
-    background:linear-gradient(180deg, var(--card), var(--bg2)); border:1px solid var(--line);
-    border-radius:var(--radius); box-shadow:var(--shadow); padding:30px 24px 26px; text-align:center;
-  }
-  .logo{width:84px;height:84px;border-radius:22px;display:block;margin:0 auto 14px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
-  h1{font-size:1.7rem;margin:.1em 0 .15em;letter-spacing:.2px}
-  .tag{color:var(--muted);font-size:.98rem;margin:0 0 2px}
-  .ver{display:inline-block;margin:12px 0 22px;padding:5px 14px;border:1px solid var(--line);border-radius:999px;color:var(--accent);font-size:.9rem;font-weight:600}
-  .btn{
-    display:flex;align-items:center;justify-content:center;gap:9px;width:100%;
-    padding:15px 18px;border-radius:14px;border:1px solid transparent;cursor:pointer;
-    font-size:1.05rem;font-weight:700;text-decoration:none;margin-bottom:12px;transition:transform .06s ease, filter .15s ease;
-  }
+  .wrap{width:100%; max-width:460px}
+  .card{background:linear-gradient(180deg,var(--card),#fcf6ea); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:var(--shadow); padding:30px 24px 26px; text-align:center}
+  .logo{width:80px;height:80px;border-radius:20px;display:block;margin:0 auto 12px;box-shadow:0 10px 26px rgba(120,90,30,.22)}
+  .brand{font-size:1.15rem;color:var(--gold-deep);font-weight:700;letter-spacing:.4px;margin:0 0 2px}
+  h1{font-size:1.7rem;margin:.1em 0 .25em;letter-spacing:.2px}
+  .lead{color:var(--muted);font-size:1rem;margin:0 auto 18px;max-width:38ch}
+  .meta{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin:0 0 20px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border:1px solid var(--line);border-radius:999px;
+    font-size:.86rem;color:var(--gold-deep);background:#fffdf7;font-weight:600}
+  .badge-android{background:#eaf5ea;border-color:#cfe8cf;color:#2e7d43}
+  .btn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;padding:16px 18px;border-radius:15px;
+    border:1px solid transparent;cursor:pointer;font-size:1.08rem;font-weight:800;text-decoration:none;margin-bottom:12px;
+    transition:transform .06s ease, filter .15s ease; font-family:inherit}
   .btn:active{transform:translateY(1px)}
-  .btn.primary{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#07120e;box-shadow:0 10px 24px var(--ring)}
-  .btn.primary:hover{filter:brightness(1.05)}
+  .btn.primary{background:linear-gradient(180deg,var(--gold),var(--gold-deep));color:#fff;box-shadow:0 12px 26px rgba(199,154,62,.38)}
+  .btn.primary:hover{filter:brightness(1.04)}
   .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
-  .btn.ghost:hover{border-color:var(--accent)}
-  .btn .ico{font-size:1.2rem;line-height:1}
-  .steps{text-align:right;margin:20px 2px 0;padding:16px 16px;background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:14px}
-  .steps h2{font-size:.98rem;margin:0 0 10px;color:var(--ink)}
-  .steps ol{margin:0;padding-inline-start:20px;color:var(--muted);font-size:.93rem}
-  .steps li{margin-bottom:7px}
-  .steps li:last-child{margin-bottom:0}
-  .foot{margin-top:20px;color:var(--muted);font-size:.82rem}
-  .foot a{color:var(--accent);text-decoration:none}
-  @media (prefers-color-scheme: light){
-    :root{--bg:#eef1f5;--bg2:#fff;--card:#fff;--line:#e2e7ee;--ink:#131821;--muted:#5c6673;--accent:#1f9c82;--accent2:#17806a;--shadow:0 18px 44px rgba(20,30,48,.14)}
-    body{background:radial-gradient(1200px 600px at 50% -10%, #fff 0%, var(--bg) 60%) no-repeat, var(--bg)}
-    .btn.primary{color:#fff}
+  .btn.ghost:hover{border-color:var(--gold)}
+  .ico{font-size:1.2rem;line-height:1}
+  .hint{color:var(--muted);font-size:.82rem;margin:2px 0 0}
+  .section{text-align:right;margin:22px 2px 0;padding:16px;background:#fffdf7;border:1px solid var(--line);border-radius:15px}
+  .section h2{font-size:1rem;margin:0 0 10px}
+  .section ol,.section ul{margin:0;padding-inline-start:20px;color:var(--muted);font-size:.93rem}
+  .section li{margin-bottom:7px}
+  .section li:last-child{margin-bottom:0}
+  .note{color:var(--muted);font-size:.85rem;margin:14px 2px 0}
+  .ios-only,.desktop-note{display:none}
+  .foot{margin-top:18px;color:var(--muted);font-size:.82rem}
+  .foot a{color:var(--gold-deep);text-decoration:none;font-weight:600}
+  @media (prefers-color-scheme: dark){
+    :root{--ivory:#f1e8d6;--card:#fffdf8;--ink:#2b2318} /* the download page stays warm/light by design */
   }
 </style>
 </head>
 <body>
   <main class="wrap">
     <div class="card">
-      <img class="logo" src="icon-192.png" alt="أيام" width="84" height="84">
-      <h1>أيام</h1>
-      <p class="tag">متابعة مهامك وعباداتك اليومية — بتصميم هادئ ومزامنة آمنة بين أجهزتك.</p>
-      <span class="ver">الإصدار 1.2.0</span>
+      <img class="logo" src="/icon-192.png" alt="أيام" width="80" height="80">
+      <p class="brand">أيّام</p>
+      <h1>حمّل أيّام للأندرويد</h1>
+      <p class="lead">استخدم أيّام كتطبيق مستقل على هاتفك، مع تجربة أسرع ووصول أسهل إلى الإشعارات والودجت ومزايا أندرويد.</p>
 
-      <a class="btn primary" href="https://github.com/dhlbmhsn357-wq/-/releases/latest/download/app-release.apk" rel="noopener">
-        <span class="ico">⬇️</span><span>تحميل تطبيق أندرويد</span>
-      </a>
-      <a class="btn ghost" href="/"><span class="ico">🌐</span><span>فتح نسخة الويب</span></a>
+      <div class="meta" id="metaRow">
+        <span class="chip badge-android">⬤ أندرويد</span>
+        <span class="chip" id="verChip">الإصدار …</span>
+        <span class="chip" id="sizeChip" hidden>الحجم …</span>
+      </div>
 
-      <section class="steps">
-        <h2>تثبيت نسخة أندرويد</h2>
+      <!-- Android / desktop: real APK download -->
+      <div id="dlBlock">
+        <a class="btn primary" id="dlBtn" href="/download/android"><span class="ico">⬇️</span><span>تنزيل تطبيق أيّام</span></a>
+        <a class="btn ghost" href="/"><span class="ico">🌐</span><span>استخدام نسخة الويب</span></a>
+        <p class="hint desktop-note" id="desktopNote">افتح هذه الصفحة على هاتف أندرويد لتثبيت التطبيق: <strong>daily-six-woad.vercel.app/download</strong></p>
+      </div>
+
+      <!-- iOS: no APK; web only -->
+      <div class="ios-only" id="iosBlock">
+        <p class="lead">نسخة أندرويد غير متاحة على هذا الجهاز.</p>
+        <a class="btn primary" href="/"><span class="ico">🌐</span><span>استخدام نسخة الويب</span></a>
+      </div>
+
+      <section class="section" id="stepsSection">
+        <h2>بعد التنزيل</h2>
         <ol>
-          <li>اضغط «تحميل تطبيق أندرويد» وانتظر انتهاء التنزيل.</li>
-          <li>افتح الملف الذي نزّلته.</li>
-          <li>لو طلب الجهاز إذنًا، فعّل «السماح بالتثبيت من هذا المصدر» ثم أكمل.</li>
-          <li>بعد التثبيت، أنشئ حسابك وابدأ فورًا — بريد وكلمة مرور فقط.</li>
+          <li>افتح ملف أيّام من التنزيلات أو من الإشعار.</li>
+          <li>إذا طلب أندرويد السماح بالتثبيت من هذا المصدر، فعّل الإذن لهذا المتصفح فقط.</li>
+          <li>اضغط «تثبيت».</li>
+          <li>افتح أيّام وسجّل الدخول بنفس حسابك.</li>
         </ol>
+        <p class="note">بياناتك ومزامنتك مرتبطة بحسابك.</p>
       </section>
 
-      <p class="foot">تفضّل البقاء على المتصفح؟ <a href="/">استخدم أيام على الويب مباشرة</a> — نفس الحساب ونفس البيانات.</p>
+      <section class="section">
+        <h2>لماذا تطبيق أندرويد؟</h2>
+        <ul>
+          <li>إشعارات أصلية مع كل صلاة.</li>
+          <li>ودجت على الشاشة الرئيسية.</li>
+          <li>تجربة أسرع وأكثر ثباتًا.</li>
+          <li>تحديثات مباشرة من داخل أيّام.</li>
+        </ul>
+      </section>
+
+      <p class="foot">تفضّل البقاء على المتصفح؟ <a href="/">استخدم أيّام على الويب مباشرة</a> — نفس الحساب ونفس البيانات.</p>
     </div>
   </main>
+  <script src="/download.js"></script>
 </body>
 </html>

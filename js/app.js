@@ -87,7 +87,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.3.1'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  const APP_VERSION = '5.3.2'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
   // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
   // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
@@ -2877,6 +2877,36 @@
       $('notifyBtn').addEventListener('click', subscribeToPush);
     }
     setupNotifyButton();
+    setupGetAppCard();
+
+    // Web-only card inviting Android web users to install the REAL Android app (not PWA). Never shown in the
+    // native app. Dismiss ("لاحقًا"/✕) hides it for 7 days. iOS gets a quiet web-only note (no APK CTA).
+    function setupGetAppCard(){
+      if(NATIVE) return;
+      const card = $('getAppCard'); if(!card) return;
+      try{ const until = parseInt(localStorage.getItem('ayyam_getapp_dismiss_v1')||'0',10)||0; if(Date.now() < until) return; }catch(e){}
+      const ua = navigator.userAgent || '';
+      const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+      const isAndroid = /Android/i.test(ua);
+      let standalone = false; try{ standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true; }catch(e){}
+      const title = $('getAppTitle'), desc = $('getAppDesc');
+      if(isIOS){
+        card.classList.add('is-note');
+        if(title) title.textContent = 'تطبيق أندرويد';
+        if(desc) desc.textContent = 'تطبيق أندرويد غير متاح لهذا الجهاز، ويمكنك استخدام نسخة الويب.';
+      } else if(isAndroid){
+        if(standalone && desc) desc.textContent = 'نزّل تطبيق أندرويد الكامل للحصول على الإشعارات الأصلية والودجت.';
+      } else { // desktop
+        if(title) title.textContent = 'تطبيق أيّام متاح للأندرويد';
+        if(desc) desc.textContent = 'افتح صفحة التحميل على هاتف أندرويد لتثبيت التطبيق.';
+      }
+      const dismiss = ()=>{ try{ localStorage.setItem('ayyam_getapp_dismiss_v1', String(Date.now()+7*24*60*60*1000)); }catch(e){} card.classList.add('hidden'); };
+      const later=$('getAppLater'), x=$('getAppDismiss'), go=$('getAppGo');
+      if(later) later.addEventListener('click', dismiss);
+      if(x) x.addEventListener('click', dismiss);
+      if(go) go.addEventListener('click', ()=>{ try{ localStorage.setItem('ayyam_getapp_dismiss_v1', String(Date.now()+7*24*60*60*1000)); }catch(e){} }); // went to /download → don't nag again
+      card.classList.remove('hidden');
+    }
 
     // Install prompt handling
     let deferredPrompt = null;
