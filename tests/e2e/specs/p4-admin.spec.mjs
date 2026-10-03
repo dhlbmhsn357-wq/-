@@ -20,7 +20,7 @@ async function signupFresh(page, email, password) {
 
 test('a normal user has NO admin entry and cannot open the dashboard (backend-gated)', async ({ page }) => {
   await signupFresh(page, 'user@t.test', 'pass1234');
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 10000 });
   await expect(page.locator('#openAdmin')).toHaveCount(0);   // no admin entry is ever rendered
   // even forcing the hash does nothing for a non-admin
@@ -34,7 +34,7 @@ test('an admin sees the dashboard: overview metrics + a server-paginated, search
   await page.reload();
   await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });  // onboarding already done → no tour
 
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#openAdmin')).toBeVisible({ timeout: 10000 });   // admin-only entry revealed
   await page.locator('#openAdmin').click();
   await expect(page.locator('#adminView')).toBeVisible();

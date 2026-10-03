@@ -84,6 +84,21 @@ test('migration is idempotent', () => {
   assert.equal(twice.prefs.dayTimezone, 'Africa/Cairo');
 });
 
+test('CORRUPTION GUARD: once migrated, an EMPTY routines set is NOT re-derived from the retained template', () => {
+  // Reproduces the reported bug: user migrated, then deleted ALL their routines. The legacy template is still
+  // retained. Re-running migrate (as a stray reload/sync might) must NOT re-inject the old template routines.
+  const migratedEmpty = Object.assign(preBundle(), { routines: {}, migrationDate: '2026-09-28', migrationVersion: 1 });
+  const out = R.migrate(migratedEmpty, '2026-10-10', 'Africa/Cairo');
+  assert.deepEqual(out.routines, {});                 // stays empty — no template routines injected over the user's choice
+  assert.equal(out.migrationDate, '2026-09-28');
+  assert.equal(out.migrationVersion, 1);
+});
+
+test('migrate stamps migrationVersion = 1 (the persisted one-time-migration signal)', () => {
+  const migrated = R.migrate(preBundle(), '2026-09-28', 'Africa/Cairo');
+  assert.equal(migrated.migrationVersion, 1);
+});
+
 test('un-migrated bundle behaves exactly like today (pure legacy)', () => {
   const pre = preBundle();
   assert.equal(pre.migrationDate, '');

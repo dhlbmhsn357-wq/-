@@ -15,7 +15,7 @@ test('the device-key / sync-key concept is GONE from the public UI (gate + setti
   // continue offline → settings has NO sync-key entry
   await page.locator('#authOffline').click();
   await expect(page.locator('.task').first()).toBeVisible({ timeout: 15000 });
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#enterKeyBtn')).toHaveCount(0);
   await expect(page.locator('#syncKeyCard')).toHaveCount(0);
   await expect(page.locator('#settingsView')).not.toContainText('مفتاح المزامنة');
@@ -41,7 +41,7 @@ test('signup requires a name (and a password of at least 6 chars)', async ({ pag
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
   await skipOnboarding(page);
   await expect(page.locator('.hero .quote')).toContainText('سلمى');           // personalised greeting
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#accountBox')).toContainText('سلمى');            // name in the account card
 });
 
@@ -54,7 +54,7 @@ test('optional local PIN: set it, then it locks the app on restart and unlocks w
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
   // enable the PIN from Settings → privacy (click the visible toggle slider; the label toggles the checkbox)
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await page.locator('#pinCard .toggle-slider').click();
   await expect(page.locator('#pinView')).toBeVisible({ timeout: 10000 });
   await enterPin(page, '1234');                 // choose

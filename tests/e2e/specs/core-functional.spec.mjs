@@ -65,11 +65,11 @@ test('navigation: prev/next day, settings, reports, back', async ({ page }) => {
   await expect(page.locator('#dayName')).not.toHaveText(day);
   await page.locator('#prevDay').click();
   await expect(page.locator('#dayName')).toHaveText(day);
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#settingsView')).toBeVisible();
   await page.locator('#closeSettings').click();
   await expect(page.locator('#mainView')).toBeVisible();
-  await page.locator('#openReports').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="progress"]').click();
   await expect(page.locator('#reportsView')).toBeVisible();
   await page.locator('#closeReports').click();
   await expect(page.locator('#mainView')).toBeVisible();

@@ -16,7 +16,7 @@ async function toSettings(page, email) {
   await expect(page.locator('#authView')).toBeHidden({ timeout: 25000 });
   await skipOnboarding(page);
   await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#settingsView')).toBeVisible({ timeout: 10000 });
 }
 

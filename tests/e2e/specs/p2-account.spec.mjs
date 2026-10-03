@@ -6,7 +6,7 @@ test.beforeEach(async ({ request }) => { await resetBackend(request); });
 test.describe.configure({ retries: 2, timeout: 90000 });
 
 async function signUp(page, email, password) {
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await page.locator('#acctOpenAuth').click();                 // opens the premium auth screen (signin mode)
   await expect(page.locator('#authView')).toBeVisible();
   await page.locator('#authSwitch').click();                   // signin → signup
@@ -29,7 +29,7 @@ test('signup migrates the legacy device data into the new account (nothing lost)
   // signup → migration (claim 'main' + merge local) → controlled reload into the account DB.
   await expect(page.locator('.task-title', { hasText: 'مهمة-قبل-الحساب' })).toBeVisible({ timeout: 25000 });
   // now in account mode: settings shows signed-in, and an edit syncs via the v2 path
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#acctSignOut')).toBeVisible();
   await page.locator('#closeSettings').click();
   await addTask(page, 'مهمة-بعد-الحساب');
@@ -43,13 +43,13 @@ test('sign out returns to the legacy device (data retained, not deleted)', async
   await expect(page.locator('.task').first()).toBeVisible();
   await waitSynced(page);
   await signUp(page, 'owner2@t.test', 'pass1234');
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 25000 });
   await page.locator('#acctSignOut').click();
   // sign-out reloads into the legacy device: the schedule is still there (not deleted)
   await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 });
   // re-open settings → the account entry (sign-in/up) is back (legacy mode)
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#acctOpenAuth')).toBeVisible();
 });
 
@@ -61,7 +61,7 @@ test('two accounts on the same device are isolated: B never sees A private data'
   await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 });
   await addTask(page, 'سرّ-حساب-أ');              // A-only data (lives in A's account)
   await waitSynced(page);
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#acctSignOut')).toBeVisible();
   await page.locator('#acctSignOut').click();
   await expect(page.locator('.task').first()).toBeVisible({ timeout: 25000 }); // reloaded into legacy

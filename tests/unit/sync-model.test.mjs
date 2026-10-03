@@ -16,6 +16,26 @@ const mat = (en) => M.materialize(en);
 const edit = (startEn, newMat, t, by) => enrich(startEn, newMat, t, by);
 const extraTitles = (m, day) => (m.logs[day] ? m.logs[day].extra.map((x) => x.title).sort() : []);
 
+test('migrationVersion (migv) persists through flatten → enrich → materialize round-trip', () => {
+  // The one-time-migration signal must survive serialization, otherwise migration can silently re-run and
+  // re-inject old template routines (the reported corruption).
+  const m = base(); m.migrationDate = '2026-09-28'; m.migrationVersion = 1;
+  const en = enrich(M.empty(), m, 5, 'srv');
+  const out = mat(en);
+  assert.equal(out.migrationVersion, 1, 'migrationVersion lost on round-trip');
+  assert.equal(out.migrationDate, '2026-09-28');
+  // a default (un-migrated) bundle round-trips to 0
+  assert.equal(mat(enrich(M.empty(), base(), 1, 'srv')).migrationVersion, 0);
+});
+
+test('migrationVersion survives a merge between two devices', () => {
+  const seed = enrich(M.empty(), base(), 1, 'srv');
+  const migrated = base(); migrated.migrationDate = '2026-09-28'; migrated.migrationVersion = 1;
+  const a = edit(seed, migrated, 10, 'A');
+  const merged = M.merge(seed, a, seed).merged;
+  assert.equal(mat(merged).migrationVersion, 1);
+});
+
 test('add vs add (different tasks, same day): both survive', () => {
   const b = enrich(M.empty(), base(), 1, 'srv');
   const a = edit(b, withExtra('2026-09-10', [{ id: 'a', title: 'من أ', period: null, time: '' }]), 10, 'A');

@@ -118,7 +118,8 @@
         .map((v) => ({ id: v.id, template: (function () { const t = {}; DAY_CODES.forEach((c) => (t[c] = cleanList(isObj(v.template) ? v.template[c] : null).map(strip))); return t; })() })) : [] };
     const routines = cleanRoutines(src.routines);
     const migrationDate = DATE_KEY_RE.test(src.migrationDate) ? src.migrationDate : '';
-    return { template, logs, prefs, tplArchive, routines, migrationDate };
+    const migrationVersion = (typeof src.migrationVersion === 'number' && src.migrationVersion >= 1) ? 1 : 0;
+    return { template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion };
   }
   const strip = (t) => ({ id: t.id, title: t.title, time: t.time, timeValue: t.timeValue || null, period: t.period }); // drop _order for archive equality
 
@@ -143,6 +144,9 @@
     // routine segments (r:<id>, whole-object leaf) + migration fence date (migd). Empty by default.
     for (const id of Object.keys(mat.routines || {})) out[`r:${id}`] = mat.routines[id];
     if (mat.migrationDate) out['migd'] = mat.migrationDate;
+    // migrationVersion register (migv): persists the one-time-migration signal so a reload/pull never re-derives
+    // routines from the retained legacy template. Without this the migration could silently re-run.
+    if (mat.migrationVersion >= 1) out['migv'] = mat.migrationVersion;
     return out;
   }
 
@@ -189,7 +193,7 @@
 
   // ---------- materialize: enriched → bundle the app renders ----------
   function materialize(en) {
-    const mat = { template: emptyTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: '0000-00-00', versions: [] }, routines: {}, migrationDate: '' };
+    const mat = { template: emptyTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: '0000-00-00', versions: [] }, routines: {}, migrationDate: '', migrationVersion: 0 };
     const ensureDay = (d) => (mat.logs[d] || (mat.logs[d] = { done: {}, extra: [], hidden: {}, overrides: {}, excused: {}, replacements: {} }));
     const extras = {}; // day -> [{order, task}]
     const tpl = {};    // dayCode -> [{order, task}]
@@ -199,6 +203,7 @@
       if (key.startsWith('p:')) { const f = key.slice(2); mat.prefs[f] = val; continue; }
       if (key === 'arch') { mat.tplArchive = val; continue; }
       if (key === 'migd') { mat.migrationDate = val; continue; }
+      if (key === 'migv') { mat.migrationVersion = val; continue; }
       if (key.startsWith('r:')) { mat.routines[key.slice(2)] = val; continue; }
       const parts = key.split(':');
       if (parts[0] === 'g') {

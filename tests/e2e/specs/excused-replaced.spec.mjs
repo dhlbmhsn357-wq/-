@@ -77,7 +77,7 @@ test('daily overview surfaces excused + replaced sections (not hidden)', async (
   await page.locator('#saveAdd').click();
   await page.locator('#scopeToday').click();
   // open today's overview from the calendar
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   await page.locator('#calGrid .cal-cell.today').click();
   const body = page.locator('#dayBody');
   await expect(body).toContainText('بعذر');

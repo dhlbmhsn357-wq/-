@@ -39,6 +39,10 @@
     cursor:pointer;font-size:18px;
   }
   .icon-btn:hover{color:var(--text);}
+  /* reminders-on state for the bell: tint the icon + a small dot, instead of a stray checkmark under it */
+  .icon-btn.notif-on{color:var(--color-primary, var(--dhuhr));border-color:var(--color-primary, var(--dhuhr));position:relative;}
+  .icon-btn.notif-on::after{content:'';position:absolute;top:5px;inset-inline-end:5px;width:7px;height:7px;border-radius:50%;
+    background:var(--color-primary, var(--dhuhr));border:1.5px solid var(--surface);}
   .icon-btn:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible{
     outline:2px solid var(--dhuhr); outline-offset:2px;
   }

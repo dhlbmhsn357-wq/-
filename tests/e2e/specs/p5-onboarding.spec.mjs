@@ -108,7 +108,7 @@ test('starter skip adds NOTHING (no worship auto-added)', async ({ page }) => {
 test('the tour can be replayed from Settings', async ({ page }) => {
   await signupToTour(page, 'replay@t.test');
   await skipOnboarding(page);
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#replayOnb')).toBeVisible({ timeout: 10000 });
   await page.locator('#replayOnb').click();
   await expect(page.locator('#onbView')).toBeVisible();

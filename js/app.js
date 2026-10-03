@@ -335,7 +335,10 @@
     // load/import/export/round-trip. cleanRoutines mirrors js/routines-model.js.
     const routines = (window.AyyamRoutines ? window.AyyamRoutines.cleanRoutines(src.routines) : {});
     const migrationDate = DATE_KEY_RE.test(src.migrationDate) ? src.migrationDate : '';
-    return {template, logs, prefs, tplArchive, routines, migrationDate};
+    // migrationVersion: the one-time-migration signal. Persisted (via sync-model migv register) so migration
+    // is PERMANENT and never re-derives routines from the retained legacy template on a later load/pull.
+    const migrationVersion = (Number.isFinite(src.migrationVersion) && src.migrationVersion >= 1) ? 1 : 0;
+    return {template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion};
   }
 
   // The v2 conflict engine lives in js/sync-model.js (LWW registers + tombstones + epoch). The old
@@ -347,8 +350,8 @@
       .finally(()=> clearTimeout(t));
   }
   const clone = o => JSON.parse(JSON.stringify(o));
-  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, migrationDate}; }
-  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; migrationDate = s.migrationDate || ''; }
+  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion}; }
+  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; migrationDate = s.migrationDate || ''; migrationVersion = (s.migrationVersion >= 1) ? 1 : 0; }
 
   // Applies a merged/adopted enriched value to the visible state and refreshes the view.
   async function adoptEnriched(en, persist){
@@ -644,8 +647,8 @@
     { target:'#fabAdd', title:'إضافة مهمة', body:'من هذا الزر تضيف مهمة أو وردًا جديدًا في أي وقت.' },
     { icon:'🔁', title:'التكرار', body:'لكل مهمة اختر تكرارها: اليوم فقط، أو يوميًا، أو أسبوعيًا، أو أيامًا محددة.' },
     { icon:'🌿', title:'المرونة', body:'يومك ليس دائمًا واحدًا: علّم المهمة «معذور» بلا تقصير، أو «استبدلها» بأخرى.' },
-    { target:'#openCalendar', title:'التقويم', body:'اعرض شهرك كاملًا وتابع اتساقك يومًا بيوم.' },
-    { target:'#openReports', title:'تحليل الأداء', body:'رؤى هادئة عن أنماطك ومواطن قوّتك، دون أحكام.' },
+    { icon:'🧭', title:'شريط التنقّل', body:'من الشريط السفلي تنتقل بين اليوم والتقويم والروتين والتقدّم والإعدادات بلمسة واحدة.' },
+    { icon:'🗓️', title:'الروتين الأسبوعي', body:'رتّب أورادك المتكررة لكل يوم من تبويب «الروتين»، وأضف روتينًا جديدًا من زر الإضافة أعلى الصفحة.' },
     { icon:'✨', title:'ابدأ يومك', body:'كل يوم فرصة جديدة. لنبدأ أولى خطواتك في أيام.', cta:'ابدأ يومك' },
   ];
   // Suggested starter items — added as daily routines ONLY when the user explicitly ticks them.
@@ -914,9 +917,13 @@
     if(routinesActivated) return;
     if(typeof AyyamRoutines==='undefined' || typeof AyyamTime==='undefined' || !M) return; // engine missing → legacy
     const b = currentBundle();
-    const migrated = !!b.migrationDate && b.routines && Object.keys(b.routines).length>0;
-    const corrupt  = !!b.migrationDate && (!b.routines || Object.keys(b.routines).length===0) && hasTemplateTasks(b.template);
-    if(migrated && !corrupt){ routinesActivated = true; return; } // already migrated → no-op (idempotent)
+    // Migration is PERMANENT and ONE-TIME. Once migrated (migrationVersion stamped, OR a migrationDate exists),
+    // NEVER re-derive routines from the retained legacy template — that would re-inject old/default routines over
+    // the user's current set (the reported corruption). An EMPTY routines set is a valid user state (they deleted
+    // them), NOT a signal to rebuild from the template. This replaces the old "corrupt → self-heal from template"
+    // branch, which wrongly fired whenever a user emptied their routines.
+    const migrated = (b.migrationVersion >= 1) || !!b.migrationDate;
+    if(migrated){ routinesActivated = true; return; } // already migrated → no-op (idempotent, never re-inject)
     // Nothing to migrate on a truly empty device (before first-load seeds/pulls); the seed/pull path re-invokes this.
     if(enrichedIsEmpty() && !hasTemplateTasks(b.template) && !(b.logs && Object.keys(b.logs).length)) return;
     try{
@@ -980,6 +987,7 @@
   // R2 will run AyyamRoutines.migrate() on load and route tasksForDate through the routines engine.
   let routines = {};
   let migrationDate = '';
+  let migrationVersion = 0; // one-time-migration signal; persisted so migration never re-runs/re-injects
 
   // The template in effect on a given date. Editing the template only changes today and later;
   // past days keep the version that was active back then (see beginTemplateEdit).
@@ -1226,12 +1234,15 @@
   }
   // Native Android reminders: user-initiated (🔔). Request POST_NOTIFICATIONS (13+) then schedule the
   // plan. Purely local — no server, no token. No-op on web.
+  // Mark the bell as "reminders on" cleanly — keep the SVG icon, just flag the state (CSS colours it + adds a
+  // small dot). Never replace the icon with emoji text (that looked like a stray checkmark under the bell).
+  function markNotifEnabled(){ const b=$('notifyBtn'); if(b){ b.classList.add('notif-on'); b.setAttribute('aria-label','التذكيرات مفعّلة'); } }
   async function enableLocalNotifs(){
     try{
       const r = await AyyamNative.requestNotifPermission();
       if(!r || r.permission!=='granted'){ alert('لتصلك تذكيرات مهامك مع كل صلاة، فعّل إذن الإشعارات من إعدادات التطبيق ثم اضغط 🔔 مرة أخرى.'); return; }
       pushNotifPlanNow(); // schedule now that notifications can be shown
-      const b=$('notifyBtn'); if(b){ b.textContent='🔔✓'; b.setAttribute('aria-label','التذكيرات مفعّلة'); }
+      markNotifEnabled();
       if(store) store.logDiag({ type:'local-notifs-enabled' });
     }catch(e){ alert('تعذّر تفعيل التذكيرات. حاول لاحقًا.'); }
   }
@@ -2380,19 +2391,14 @@
   $('clearDayBtn').addEventListener('click', clearWholeDay);
   $('restoreDayBtn').addEventListener('click', restoreDayToTemplate);
 
-  $('openSettings').addEventListener('click', openSettings);
   $('closeSettings').addEventListener('click', closeSettings);
   $('tplAddTask').addEventListener('click', ()=> openAddSheet({ mode:'template', day: settingsDay }));
 
   // routine (weekly template) screen
   { const cr=$('closeRoutine'); if(cr) cr.addEventListener('click', closeRoutine); }
 
-  // reports
-  $('openReports').addEventListener('click', openReports);
+  // reports / calendar / routine back buttons (header nav icons removed — the bottom nav is the only top-level nav)
   $('closeReports').addEventListener('click', closeReports);
-
-  // calendar
-  $('openCalendar').addEventListener('click', openCalendar);
   $('closeCalendar').addEventListener('click', closeCalendar);
 
   // bottom navigation: switch among the 5 base screens (no reload; state/session/sync preserved)
@@ -2762,8 +2768,7 @@
         alert('تعذّر تسجيل الإشعارات على الخادم. تأكد من الاتصال وحاول مرة أخرى.');
         return;
       }
-      $('notifyBtn').textContent = '🔔✓';
-      $('notifyBtn').setAttribute('aria-label','الإشعارات مفعّلة');
+      markNotifEnabled();
       autoRefreshLocation();
     }
 
@@ -2772,7 +2777,7 @@
       if(NATIVE){
         if(AyyamNative.notifConfigured && AyyamNative.notifConfigured()){
           $('notifyBtn').classList.remove('hidden');
-          try{ const st = await AyyamNative.checkNotifPermission(); if(st && st.permission==='granted'){ $('notifyBtn').textContent='🔔✓'; $('notifyBtn').setAttribute('aria-label','التذكيرات مفعّلة'); } }catch(e){}
+          try{ const st = await AyyamNative.checkNotifPermission(); if(st && st.permission==='granted'){ markNotifEnabled(); } }catch(e){}
           $('notifyBtn').addEventListener('click', enableLocalNotifs);
         }
         return;

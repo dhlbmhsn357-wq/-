@@ -26,7 +26,7 @@ test('a new user is taken to the account screen (not the device key) and can cre
   await skipOnboarding(page);                                          // a new account starts the P5 tour
   // the empty account shows the welcoming empty state (no auto-added worship), and we are signed in
   await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 10000 });
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 10000 });   // signed in
 });
 
@@ -65,7 +65,7 @@ test('the session is restored after a restart (no auth gate on reload)', async (
   await expect(page.locator('#emptyToday')).toBeVisible({ timeout: 25000 });
   await expect(page.locator('#authView')).toBeHidden();
   await expect(page.locator('#onbView')).toBeHidden();
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 10000 });   // still signed in
 });
 
