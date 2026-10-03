@@ -111,7 +111,7 @@
     const p = isObj(src.prefs) ? src.prefs : {};
     const d = defaultPrefs();
     const num = (v, min, max, def) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def);
-    const prefs = { theme: p.theme === 'day' ? 'day' : 'night', bgOn: typeof p.bgOn === 'boolean' ? p.bgOn : d.bgOn,
+    const prefs = { theme: p.theme === 'day' ? 'day' : 'night', bgOn: false, // background feature retired; coerce legacy bgOn:true → false
                     bgOpacity: num(p.bgOpacity, 30, 95, d.bgOpacity), bgBlur: num(p.bgBlur, 0, 10, d.bgBlur), location: cleanLocation(p.location),
                     dayTimezone: typeof p.dayTimezone === 'string' ? p.dayTimezone : '' };
     const a = isObj(src.tplArchive) ? src.tplArchive : {};

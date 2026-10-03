@@ -17,14 +17,21 @@ test('a fresh (empty) materialized bundle has bgOn=false → applyPrefs will not
   assert.equal(mat.prefs.bgOn, false);
 });
 
-test('sanitize preserves an explicit bgOn=true (old users who enabled it are NOT force-changed)', () => {
+test('sanitize COERCES a legacy explicit bgOn=true to false (feature retired for all users)', () => {
   const mat = M.sanitizeMaterialized({ prefs: { bgOn: true } });
-  assert.equal(mat.prefs.bgOn, true);
+  assert.equal(mat.prefs.bgOn, false);
 });
 
-test('sanitize with no bgOn falls back to the new OFF default', () => {
+test('sanitize with no bgOn is false', () => {
   const mat = M.sanitizeMaterialized({ prefs: {} });
   assert.equal(mat.prefs.bgOn, false);
+});
+
+test('legacy bgOpacity/bgBlur are kept in the data (unused), only bgOn is forced off', () => {
+  const mat = M.sanitizeMaterialized({ prefs: { bgOn: true, bgOpacity: 80, bgBlur: 6 } });
+  assert.equal(mat.prefs.bgOn, false);
+  assert.equal(mat.prefs.bgOpacity, 80); // preserved, but has no UI effect without a background
+  assert.equal(mat.prefs.bgBlur, 6);
 });
 
 test('a brand-new account seeded from defaults flattens bgOn=false (no background register turns it on)', () => {

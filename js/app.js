@@ -330,8 +330,8 @@
     const num = (v,min,max,def)=> Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def;
     const prefs = {
       theme: p.theme==='day' ? 'day' : 'night',
-      bgOn: typeof p.bgOn==='boolean' ? p.bgOn : d.bgOn,
-      bgOpacity: num(p.bgOpacity, 30, 95, d.bgOpacity),
+      bgOn: false, // background feature retired for everyone; coerce any legacy bgOn:true to false on load
+      bgOpacity: num(p.bgOpacity, 30, 95, d.bgOpacity), // kept in data (unused) — never affects the UI now
       bgBlur: num(p.bgBlur, 0, 10, d.bgBlur),
       location: cleanLocation(p.location),
       dayTimezone: typeof p.dayTimezone==='string' ? p.dayTimezone : '',
@@ -1034,12 +1034,11 @@
 
   function applyPrefs(){
     document.documentElement.setAttribute('data-theme', prefs.theme);
-    document.body.classList.toggle('has-bg', !!prefs.bgOn);
-    if(prefs.bgOn){
-      document.body.style.backgroundImage = "url('" + BG_URL + "')";
-    } else {
-      document.body.style.backgroundImage = '';
-    }
+    // Background-image feature is RETIRED for ALL users (product decision). Never apply a background image
+    // or load bg.jpg — even if older synced prefs still carry bgOn:true. Any legacy bgOpacity/bgBlur stay
+    // in the data but have no UI effect (nothing to overlay/blur without a background).
+    document.body.classList.remove('has-bg');
+    document.body.style.backgroundImage = '';
     document.documentElement.style.setProperty('--bg-overlay',
       prefs.theme==='day'
         ? `rgba(255,250,238,${prefs.bgOpacity/100})`
