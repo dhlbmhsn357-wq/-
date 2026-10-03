@@ -281,9 +281,24 @@
     return fresh; // registers all stamped `now`, no tombstones, epoch+1 → fences older devices
   }
 
+  // ---------- one-time legacy→routines migration generation (multi-device safe) ----------
+  // Like bumpEpoch — a NEW epoch so a pre-routines device can't destructively re-write the migrated
+  // state — BUT every derived register is stamped at the BASELINE time (1) with an EMPTY writer id, not
+  // `now`/DEVICE_ID. Consequences, both required to close the multi-device routine blocker:
+  //   • Two devices that migrate the SAME retained legacy template independently produce BYTE-IDENTICAL
+  //     registers (same keys, t:1, by:''), so a same-epoch merge is a fixed point — no duplication,
+  //     no legacy re-injection.
+  //   • Any REAL routine edit/delete (stamped at `now` ≫ 1 via enrich) always beats a late migrator's
+  //     baseline register — so a second device that migrates afterwards can never clobber or revive the
+  //     other device's genuine routine changes.
+  // (The epoch is still bumped so the ordered, online path keeps fencing a not-yet-migrated older device.)
+  function migrateGeneration(prev, newMat) {
+    return enrich(empty((prev ? prev.epoch : 0) + 1), newMat, 1, '');
+  }
+
   global.AyyamModel = {
     DAY_CODES, TOMBSTONE_TTL_MS,
-    sanitizeMaterialized, flatten, empty, enrich, materialize, toEnriched, merge, pruneTombstones, bumpEpoch,
+    sanitizeMaterialized, flatten, empty, enrich, materialize, toEnriched, merge, pruneTombstones, bumpEpoch, migrateGeneration,
     defaultPrefs, emptyTemplate,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -902,7 +902,8 @@
   async function saveBundle(reason){
     changeSeq++;
     const now = Date.now();
-    if(reason === 'reset' || reason === 'import' || reason === 'routines-migrate') enriched = M.bumpEpoch(enriched, currentBundle(), now, DEVICE_ID);
+    if(reason === 'reset' || reason === 'import') enriched = M.bumpEpoch(enriched, currentBundle(), now, DEVICE_ID);
+    else if(reason === 'routines-migrate') enriched = M.migrateGeneration(enriched, currentBundle()); // baseline-stamped → multi-device safe (never clobbers real edits)
     else enriched = M.enrich(enriched, currentBundle(), now, DEVICE_ID);
     setPending(true);
     syncState = 'syncing';
@@ -924,10 +925,11 @@
   }
 
   // ---------- R2: one-time recurrence activation (migration) ----------
-  // Runs once on load over real data: recovery snapshot → AyyamRoutines.migrate() → persist as a new
-  // epoch generation (compatibility fence so a pre-R2 device can't destructively re-write the new state).
-  // Idempotent, fail-safe (on any error the old state is kept and the app stays on the legacy path), and
-  // self-healing (a stray "migrated but routines missing" state is rebuilt from the retained template).
+  // Runs once on load over real data: recovery snapshot → AyyamRoutines.migrate() → persist as a new,
+  // BASELINE-stamped epoch generation (migrateGeneration: fences a pre-routines device, yet converges
+  // byte-identically with another device's independent migration and never outweighs a real edit).
+  // Idempotent (the migv/migrationDate guard) and fail-safe (on any error the old state is kept and the
+  // app stays on the legacy path). It never re-derives routines from the template once migrated.
   let routinesActivated = false;
   function hasTemplateTasks(tpl){ return isObj(tpl) && DAY_CODES.some(c=> Array.isArray(tpl[c]) && tpl[c].length); }
   async function activateRoutinesIfNeeded(){
@@ -2958,11 +2960,17 @@
   applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
   selectedDate = parseKey(todayKey()); // canonical "today" once prefs (dayTimezone) are loaded
   if(init.state && !enrichedIsEmpty()){
-    // existing device: activate routines once (safe migration), then show local data; sync in background
-    await activateRoutinesIfNeeded();
+    // Existing device: show local data immediately, then PULL+MERGE *before* the one-time routines
+    // migration. Adopting any already-migrated remote state first (it carries the migv register) makes
+    // activateRoutinesIfNeeded() a true no-op here via its idempotency guard — so two devices on the same
+    // account can never migrate independently and clobber/duplicate/re-inject each other's routines
+    // (multi-device hardening). If the pull can't complete (offline), we fall through and migrate locally;
+    // migrateGeneration() is baseline-stamped, so a later convergence still can't lose a real edit.
     if(loadingEl) loadingEl.classList.add('hidden');
     render();
-    syncNow();
+    try{ await syncNow(); }catch(e){}   // pull+merge+commit (adopts remote migration); offline → caught
+    await activateRoutinesIfNeeded();
+    render();
   } else {
     // no local data: show nothing (not the default schedule) behind the overlay until we know the truth
     setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: prefs, tplArchive: { since: EPOCH_KEY, versions: [] } });
