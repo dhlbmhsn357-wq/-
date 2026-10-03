@@ -9,7 +9,7 @@
 // Never cached: Supabase (API / RPC / auth / personal sync data). Fonts/CDN use a bounded
 // stale-while-revalidate cache and never block the app.
 
-const SW_VERSION = '5.3.2';
+const SW_VERSION = '5.3.3';
 const APP_CACHE = `ayyam-app-${SW_VERSION}`;
 const RUNTIME_CACHE = `ayyam-runtime-${SW_VERSION}`;
 const RUNTIME_MAX = 60; // bounded so the runtime cache can't grow without limit
@@ -75,6 +75,10 @@ self.addEventListener('fetch', (event) => {
 
   // Navigations → the precached app shell (cache-first) so HTML and JS are always the same version.
   if (req.mode === 'navigate') {
+    // EXCEPTION: the download landing page (/download, /download.html) and the direct-APK endpoint
+    // (/download/android → 307 to the APK) are REAL network pages, not the SPA shell. Let them pass
+    // through to the network, otherwise the SW would serve the app shell (and the APK would never download).
+    if (sameOrigin && (url.pathname === '/download' || url.pathname === '/download.html' || url.pathname.startsWith('/download/'))) return;
     event.respondWith((async () => {
       const cache = await caches.open(APP_CACHE);
       return (await cache.match('index.html')) || (await cache.match('./')) || fetch(req).catch(() => Response.error());
