@@ -39,7 +39,9 @@ test('a new SW waits, shows the banner, and updating reloads onto a coherent ver
   // tap the pill → the update sheet shows the version + release notes + «تحديث الآن»/«لاحقًا» (same UX as Android)
   await page.locator('#updateNow').click();
   await expect(page.locator('#updateOverlay')).toHaveClass(/show/);
-  await expect(page.locator('#updateSheetNotes')).toContainText('مزامنة');
+  // notes come from the CURRENT release manifest (update.json), not a hardcoded/previous-release list
+  await expect(page.locator('#updateSheetNotes')).toContainText('الإشعارات');
+  await expect(page.locator('#updateSheetNotes')).not.toContainText('شريط تنقّل'); // no stale 1.2.0-only feature text
   // «تحديث الآن» → activates the new version and reloads; the new app cache replaces the old
   await page.locator('#updateInstall').click();
   await expect.poll(async () => {

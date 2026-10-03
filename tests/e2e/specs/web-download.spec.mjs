@@ -57,28 +57,29 @@ test('the service worker does NOT hijack /download — it serves the real page, 
   await expect(page.locator('#authView')).toHaveCount(0); // proves it is NOT the SPA app shell
 });
 
-// ---------------- in-app install card ----------------
-test('Android/desktop web users see the install card; CTA goes to /download; dismiss hides it', async ({ page }) => {
-  await signupAndLand(page, 'card@t.test');
-  const card = page.locator('#getAppCard');
-  await expect(card).toBeVisible({ timeout: 10000 });
-  await expect(page.locator('#getAppGo')).toHaveAttribute('href', '/download'); // → /download, not github
-  await page.locator('#getAppLater').click();
-  await expect(card).toBeHidden();
-  // dismissal persists across a reload (7-day window)
-  await page.reload();
-  await expect(page.locator('#mainView')).toBeVisible({ timeout: 25000 });
-  await expect(page.locator('#getAppCard')).toBeHidden();
+// ---------------- header "download Android app" icon (replaces the big card) ----------------
+test('a small header download icon is shown to web users and opens /download (never a PWA install)', async ({ page }) => {
+  await signupAndLand(page, 'icon@t.test');
+  const btn = page.locator('#getAppBtn');
+  await expect(btn).toBeVisible({ timeout: 10000 });
+  await expect(btn).toHaveAttribute('aria-label', 'تحميل تطبيق أندرويد');
+  // the big promo card no longer exists anywhere
+  await expect(page.locator('#getAppCard')).toHaveCount(0);
+  // clicking navigates to /download (NOT a beforeinstallprompt / add-to-home-screen)
+  await btn.click();
+  await expect(page).toHaveURL(/\/download(\.html)?$/, { timeout: 10000 });
+  await expect(page.locator('#dlBtn')).toBeVisible({ timeout: 10000 }); // the real download page
 });
 
-test('iOS web users get the quiet web-only note (no APK CTA) in the install card', async ({ browser }) => {
+test('on iOS the header icon opens /download, which shows the web-only state', async ({ browser }) => {
   const ctx = await browser.newContext({ userAgent: IOS_UA });
   const page = await ctx.newPage();
-  await signupAndLand(page, 'cardios@t.test');
-  const card = page.locator('#getAppCard');
-  await expect(card).toBeVisible({ timeout: 10000 });
-  await expect(card).toHaveClass(/is-note/);
-  await expect(page.locator('#getAppActions, .getapp-actions')).toBeHidden(); // no APK CTA on iOS
-  await expect(card).toContainText('غير متاح');
+  await signupAndLand(page, 'iconios@t.test');
+  const btn = page.locator('#getAppBtn');
+  await expect(btn).toBeVisible({ timeout: 10000 });
+  await btn.click();
+  await expect(page).toHaveURL(/\/download(\.html)?$/, { timeout: 10000 });
+  await expect(page.locator('#iosBlock')).toBeVisible({ timeout: 10000 }); // iOS → web-only, no APK button
+  await expect(page.locator('#dlBlock')).toBeHidden();
   await ctx.close();
 });
