@@ -56,6 +56,23 @@
   .ay-toast-msg{flex:1;}
   .ay-toast-act{flex:none;background:var(--color-primary, var(--dhuhr));color:#07120e;border:none;border-radius:9px;
     padding:7px 13px;font-weight:700;font-family:inherit;cursor:pointer;font-size:.9rem;white-space:nowrap;}
+  /* web-only "get the Android app" card (top of Today). Hidden in the native app + by dismiss state. */
+  .getapp-card{position:relative;margin:4px 0 16px;padding:16px 16px 14px;border:1px solid var(--line);border-radius:16px;
+    background:linear-gradient(180deg, color-mix(in srgb, var(--color-primary, var(--dhuhr)) 10%, var(--surface)), var(--surface));
+    box-shadow:0 8px 24px rgba(0,0,0,.12);}
+  .getapp-close{position:absolute;top:8px;inset-inline-end:8px;width:28px;height:28px;border:none;background:transparent;
+    color:var(--text-dim, var(--muted));font-size:1rem;cursor:pointer;border-radius:8px;line-height:1;}
+  .getapp-close:hover{color:var(--text);}
+  .getapp-title{font-weight:800;font-size:1.02rem;margin:0 26px 4px 0;}
+  .getapp-desc{color:var(--text-dim, var(--muted));font-size:.9rem;line-height:1.6;margin:0 0 12px;}
+  .getapp-actions{display:flex;gap:10px;flex-wrap:wrap;}
+  .getapp-btn{flex:1 1 auto;min-width:120px;text-align:center;padding:11px 14px;border-radius:12px;font-weight:700;
+    font-family:inherit;font-size:.96rem;cursor:pointer;text-decoration:none;border:1px solid transparent;transition:filter .15s ease;}
+  .getapp-btn.primary{background:var(--color-primary, var(--dhuhr));color:#07120e;}
+  .getapp-btn.primary:hover{filter:brightness(1.05);}
+  .getapp-btn.ghost{background:transparent;color:var(--text);border-color:var(--line);}
+  .getapp-btn.ghost:hover{border-color:var(--color-primary, var(--dhuhr));}
+  .getapp-card.is-note .getapp-actions{display:none;} /* iOS: quiet note, no APK CTA (dismiss ✕ stays) */
   .icon-btn:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible{
     outline:2px solid var(--dhuhr); outline-offset:2px;
   }

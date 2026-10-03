@@ -4,6 +4,9 @@
     { "source": "/download", "destination": "/download.html" },
     { "source": "/update.json", "destination": "/api/update" }
   ],
+  "redirects": [
+    { "source": "/download/android", "destination": "https://github.com/dhlbmhsn357-wq/-/releases/latest/download/app-release.apk", "permanent": false }
+  ],
   "headers": [
     {
       "source": "/(.*)",

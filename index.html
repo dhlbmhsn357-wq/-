@@ -82,6 +82,16 @@
   </header>
 
   <div class="wrap">
+    <!-- Web-only "get the Android app" card. Shown by JS to eligible web users (never in the native app). -->
+    <div id="getAppCard" class="getapp-card hidden" role="region" aria-label="تطبيق أندرويد">
+      <button type="button" class="getapp-close" id="getAppDismiss" aria-label="لاحقًا">✕</button>
+      <div class="getapp-title" id="getAppTitle">أيّام متاح كتطبيق للأندرويد</div>
+      <div class="getapp-desc" id="getAppDesc">حمّله كتطبيق مستقل على هاتفك لتجربة أسرع، مع الإشعارات والودجت ومزايا أندرويد.</div>
+      <div class="getapp-actions">
+        <a class="getapp-btn primary" id="getAppGo" href="/download">تحميل تطبيق أيّام</a>
+        <button type="button" class="getapp-btn ghost" id="getAppLater">لاحقًا</button>
+      </div>
+    </div>
     <section class="hero">
       <p class="quote">«إنما أنت أيام، كلما ذهب يوم ذهب بعضك»</p>
       <div class="day-row">
