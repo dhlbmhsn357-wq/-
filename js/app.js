@@ -87,7 +87,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.3.3'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  const APP_VERSION = '5.3.4'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
   // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
   // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
@@ -104,7 +104,7 @@
   // hiding a published update for long. Used for the native APK check; the web SW checks on load + on focus.
   const NATIVE_UPDATE_INTERVAL = 20 * 60 * 1000;
   // Notes shown in the WEB update prompt (Android reads notes from update.json). Keep in step with a release.
-  const RELEASE_NOTES = ['حساب شخصي ومزامنة آمنة بين أجهزتك', 'تجربة تعريفية محسّنة للمستخدم الجديد', 'شاشة مستقلة للروتين الأسبوعي', 'شريط تنقّل جديد وأسهل', 'تحسينات كبيرة في المزامنة والعمل بدون إنترنت', 'تحسين تجربة الإعدادات والإشعارات', 'إصلاحات مهمة لاستقرار الروتين والبيانات'];
+  // (Update-window notes are read from the current release's update.json — single source of truth — not hardcoded.)
 
   const LS_TPL = 'ayyam_template_v1';
   const LS_LOG = 'ayyam_logs_v1';
@@ -2755,13 +2755,20 @@
       // Same UX as Android: a calm pill → a sheet with the version + release notes + «تحديث الآن»/«لاحقًا».
       // «تحديث الآن» flushes nothing to lose (local data persists across the SW activation), then
       // SKIP_WAITING → activate → the controllerchange handler reloads ONCE onto the coherent version.
-      pendingUpdate = { versionName: APP_VERSION, notes: RELEASE_NOTES };
       updateAction = async ()=>{
         const btn=$('updateInstall'); if(btn) btn.disabled=true;
         try{ if(isPending() && navigator.onLine!==false) await syncNow('pre-update'); }catch(e){}
         try{ worker.postMessage({ type:'SKIP_WAITING' }); }catch(e){}
       };
-      showUpdatePill(openUpdateSheet);
+      // Notes come from the CURRENT release manifest (single source of truth = update.json), so the window
+      // never shows a previous release's notes. Relative /update.json is same-origin on web; generic
+      // fallback if it can't be read. (This path is web-only; native uses its own update.json reader.)
+      pendingUpdate = { versionName: APP_VERSION, notes: ['تحسينات وإصلاحات.'] };
+      fetch('/update.json', { cache:'no-store' })
+        .then(r=> r.ok ? r.json() : null)
+        .then(m=>{ if(m && Array.isArray(m.notes) && m.notes.length){ pendingUpdate = { versionName: m.versionName || APP_VERSION, notes: m.notes }; } })
+        .catch(()=>{})
+        .finally(()=> showUpdatePill(openUpdateSheet));
     }
 
     // ---------- Push notifications setup ----------
@@ -2877,54 +2884,17 @@
       $('notifyBtn').addEventListener('click', subscribeToPush);
     }
     setupNotifyButton();
-    setupGetAppCard();
 
-    // Web-only card inviting Android web users to install the REAL Android app (not PWA). Never shown in the
-    // native app. Dismiss ("لاحقًا"/✕) hides it for 7 days. iOS gets a quiet web-only note (no APK CTA).
-    function setupGetAppCard(){
-      if(NATIVE) return;
-      const card = $('getAppCard'); if(!card) return;
-      try{ const until = parseInt(localStorage.getItem('ayyam_getapp_dismiss_v1')||'0',10)||0; if(Date.now() < until) return; }catch(e){}
-      const ua = navigator.userAgent || '';
-      const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
-      const isAndroid = /Android/i.test(ua);
-      let standalone = false; try{ standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true; }catch(e){}
-      const title = $('getAppTitle'), desc = $('getAppDesc');
-      if(isIOS){
-        card.classList.add('is-note');
-        if(title) title.textContent = 'تطبيق أندرويد';
-        if(desc) desc.textContent = 'تطبيق أندرويد غير متاح لهذا الجهاز، ويمكنك استخدام نسخة الويب.';
-      } else if(isAndroid){
-        if(standalone && desc) desc.textContent = 'نزّل تطبيق أندرويد الكامل للحصول على الإشعارات الأصلية والودجت.';
-      } else { // desktop
-        if(title) title.textContent = 'تطبيق أيّام متاح للأندرويد';
-        if(desc) desc.textContent = 'افتح صفحة التحميل على هاتف أندرويد لتثبيت التطبيق.';
-      }
-      const dismiss = ()=>{ try{ localStorage.setItem('ayyam_getapp_dismiss_v1', String(Date.now()+7*24*60*60*1000)); }catch(e){} card.classList.add('hidden'); };
-      const later=$('getAppLater'), x=$('getAppDismiss'), go=$('getAppGo');
-      if(later) later.addEventListener('click', dismiss);
-      if(x) x.addEventListener('click', dismiss);
-      if(go) go.addEventListener('click', ()=>{ try{ localStorage.setItem('ayyam_getapp_dismiss_v1', String(Date.now()+7*24*60*60*1000)); }catch(e){} }); // went to /download → don't nag again
-      card.classList.remove('hidden');
+    // Header "download the Android app" icon (web-only; never in the native app). It opens the /download
+    // page and NEVER triggers a PWA install / add-to-home-screen. Shown for EVERY web user (no dismiss);
+    // on iOS it still opens /download, which shows the correct iOS web-only state.
+    if(!NATIVE){
+      const gb = $('getAppBtn');
+      if(gb){ gb.classList.remove('hidden'); gb.addEventListener('click', ()=>{ try{ location.assign('/download'); }catch(e){ location.href='/download'; } }); }
     }
-
-    // Install prompt handling
-    let deferredPrompt = null;
-    window.addEventListener('beforeinstallprompt', (e)=>{
-      e.preventDefault();
-      deferredPrompt = e;
-      $('installBtn').classList.remove('hidden');
-    });
-    $('installBtn').addEventListener('click', async ()=>{
-      if(!deferredPrompt) return;
-      deferredPrompt.prompt();
-      await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      $('installBtn').classList.add('hidden');
-    });
-    window.addEventListener('appinstalled', ()=>{
-      $('installBtn').classList.add('hidden');
-    });
+    // PWA install remains available via the browser's own UI; we suppress only the auto mini-infobar so it
+    // doesn't compete with the Android-app invitation (the arrow icon = the real Android app).
+    window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); });
   }
   setupPWA();
 

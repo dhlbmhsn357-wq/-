@@ -236,7 +236,9 @@ const server = http.createServer(async (req, res) => {
   if (p === '/mock-supabase.js') return send(res, 200, readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'mock-supabase.js')), MIME['.js']);
 
   // ---- static app files (index.html has its Supabase CDN script swapped for the mock) ----
-  let file = p === '/' ? 'index.html' : p.replace(/^\//, '');
+  // mirror the production vercel.json rewrite so /download serves the download landing page in E2E too
+  const servePath = (p === '/download') ? '/download.html' : p;
+  let file = servePath === '/' ? 'index.html' : servePath.replace(/^\//, '');
   const full = join(ROOT, file);
   if (!full.startsWith(ROOT) || !existsSync(full)) return send(res, 404, 'not found', 'text/plain');
   let body = readFileSync(full);
