@@ -9,7 +9,7 @@
 // Never cached: Supabase (API / RPC / auth / personal sync data). Fonts/CDN use a bounded
 // stale-while-revalidate cache and never block the app.
 
-const SW_VERSION = '5.2.1';
+const SW_VERSION = '5.3.0';
 const APP_CACHE = `ayyam-app-${SW_VERSION}`;
 const RUNTIME_CACHE = `ayyam-runtime-${SW_VERSION}`;
 const RUNTIME_MAX = 60; // bounded so the runtime cache can't grow without limit

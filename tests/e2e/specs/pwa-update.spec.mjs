@@ -39,7 +39,7 @@ test('a new SW waits, shows the banner, and updating reloads onto a coherent ver
   // tap the pill → the update sheet shows the version + release notes + «تحديث الآن»/«لاحقًا» (same UX as Android)
   await page.locator('#updateNow').click();
   await expect(page.locator('#updateOverlay')).toHaveClass(/show/);
-  await expect(page.locator('#updateSheetNotes')).toContainText('حسابات');
+  await expect(page.locator('#updateSheetNotes')).toContainText('مزامنة');
   // «تحديث الآن» → activates the new version and reloads; the new app cache replaces the old
   await page.locator('#updateInstall').click();
   await expect.poll(async () => {

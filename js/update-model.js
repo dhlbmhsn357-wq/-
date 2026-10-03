@@ -61,15 +61,18 @@
   }
 
   // Classify the OUTCOME of a MANUAL update check from the raw fetch result + the installed build, so a
-  // tapped "check for update" button can always give deterministic, non-silent feedback. Pure (no I/O):
-  //   { ok:false }                → 'network'   (request failed / offline)
-  //   ok but text not a manifest  → 'malformed' (invalid/partial metadata — caller shows a safe message,
-  //                                              logs a diagnostic internally, never a raw error)
-  //   valid manifest, not newer   → 'latest'
-  //   valid manifest, newer       → 'available' (+ manifest)
+  // tapped "check for update" button can always give deterministic, non-silent feedback. Pure (no I/O).
+  // Four failure states are kept DISTINCT on purpose (never "check your connection" for everything):
+  //   { ok:false, reachable:false } → 'network'     (offline / DNS / timeout — the server wasn't reached)
+  //   { ok:false, reachable:true }  → 'unavailable'  (reached the server but it answered with an HTTP
+  //                                                   error, e.g. 404 before update.json is published)
+  //   ok but text not a manifest    → 'malformed'    (reached + got a body, but it isn't a valid manifest)
+  //   valid manifest, not newer     → 'latest'
+  //   valid manifest, newer         → 'available'    (+ manifest)
+  // `reachable` defaults to false, so an old caller passing just { ok:false } still classifies as 'network'.
   function evaluateUpdate(res) {
     res = res || {};
-    if (!res.ok) return { outcome: 'network' };
+    if (!res.ok) return { outcome: res.reachable === true ? 'unavailable' : 'network' };
     const manifest = parseManifest(res.text);
     if (!manifest) return { outcome: 'malformed' };
     if (!isUpdateAvailable(manifest, res.installedVersionCode)) return { outcome: 'latest' };

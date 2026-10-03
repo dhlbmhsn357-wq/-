@@ -87,7 +87,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.2.1'; // bump per release; kept in step with sw.js SW_VERSION
+  const APP_VERSION = '5.3.0'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
   // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
   // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
@@ -99,7 +99,7 @@
   // hiding a published update for long. Used for the native APK check; the web SW checks on load + on focus.
   const NATIVE_UPDATE_INTERVAL = 20 * 60 * 1000;
   // Notes shown in the WEB update prompt (Android reads notes from update.json). Keep in step with a release.
-  const RELEASE_NOTES = ['حسابات ومزامنة آمنة بين أجهزتك', 'جولة تعريفية جديدة', 'تصميم محسّن بالكامل', 'تحسينات الاستقرار'];
+  const RELEASE_NOTES = ['حساب شخصي ومزامنة آمنة بين أجهزتك', 'تجربة تعريفية محسّنة للمستخدم الجديد', 'شاشة مستقلة للروتين الأسبوعي', 'شريط تنقّل جديد وأسهل', 'تحسينات كبيرة في المزامنة والعمل بدون إنترنت', 'تحسين تجربة الإعدادات والإشعارات', 'إصلاحات مهمة لاستقرار الروتين والبيانات'];
 
   const LS_TPL = 'ayyam_template_v1';
   const LS_LOG = 'ayyam_logs_v1';
@@ -2623,16 +2623,18 @@
     const btn=$('checkUpdateBtn'); const orig = btn ? btn.textContent : '';
     if(btn){ btn.disabled=true; btn.setAttribute('aria-busy','true'); btn.textContent='جارٍ التحقق…'; }
     setUpdateCheckMsg('جارٍ التحقق من وجود تحديث…', 'info');
-    let res = { ok:false };
+    let res = { ok:false, reachable:false };
     try{
-      if(navigator.onLine === false) throw new Error('offline');
+      if(navigator.onLine === false) throw new Error('offline'); // reachable stays false → 'network'
       const r = await fetch(UPDATE_MANIFEST_URL, { cache:'no-store' });
-      if(!r.ok) throw new Error('http '+r.status);
-      const text = await r.text();
-      let installed=null; try{ const info=await AyyamNative.appInfo(); installed=info&&info.build; }catch(e){}
-      res = { ok:true, text, installedVersionCode: installed };
-      try{ localStorage.setItem(LS_UPDATE_CHECK, String(Date.now())); }catch(e){}
-    }catch(e){ res = { ok:false, error:(e&&e.message)||'error' }; }
+      if(!r.ok){ res = { ok:false, reachable:true, status:r.status }; }  // server reached, but no/again manifest → 'unavailable'
+      else {
+        const text = await r.text();
+        let installed=null; try{ const info=await AyyamNative.appInfo(); installed=info&&info.build; }catch(e){}
+        res = { ok:true, text, installedVersionCode: installed };
+        try{ localStorage.setItem(LS_UPDATE_CHECK, String(Date.now())); }catch(e){}
+      }
+    }catch(e){ res = { ok:false, reachable:false, error:(e&&e.message)||'error' }; } // offline / DNS / timeout
     const verdict = AyyamUpdate.evaluateUpdate(res);
     if(btn){ btn.disabled=false; btn.removeAttribute('aria-busy'); btn.textContent=orig||'التحقق من وجود تحديث'; }
     updateCheckInFlight = false;
@@ -2645,9 +2647,12 @@
       setUpdateCheckMsg('أنت تستخدم أحدث إصدار من أيام.', 'ok');
     } else if(verdict.outcome==='malformed'){
       try{ store && store.logDiag && store.logDiag({ type:'update-manifest-invalid' }); }catch(e){}   // internal diagnostic only — never a raw error to the user
-      setUpdateCheckMsg('تعذّر التحقق من وجود تحديث الآن. حاول مرة أخرى لاحقًا.', 'err');
+      setUpdateCheckMsg('تعذّر قراءة بيانات التحديث. حاول مرة أخرى لاحقًا.', 'err');
+    } else if(verdict.outcome==='unavailable'){
+      try{ store && store.logDiag && store.logDiag({ type:'update-manifest-unavailable', status: res.status }); }catch(e){}
+      setUpdateCheckMsg('خدمة التحديث غير متاحة حاليًا. حاول مرة أخرى لاحقًا.', 'err');  // reached the server, no manifest (≠ انقطاع اتصال)
     } else {
-      setUpdateCheckMsg('تعذر التحقق من وجود تحديث. تحقق من الاتصال وحاول مرة أخرى.', 'err');
+      setUpdateCheckMsg('تعذّر الوصول إلى خدمة التحديث. تحقّق من اتصالك بالإنترنت وحاول مرة أخرى.', 'err');  // genuine network failure
     }
   }
   function setupUpdateSheet(){
@@ -2991,7 +2996,11 @@
   }
   // P8 settings meta: app version, hide the legacy sync-key card for account users (never expose it), native update check.
   try{
-    const av = $('appVersionInfo'); if(av) av.textContent = 'أيام · الإصدار ' + APP_VERSION + (NATIVE ? ' — أندرويد' : ' — ويب');
+    // On Android show the REAL installed APK versionName (e.g. 1.2.0) from the native bridge — the web/PWA
+    // line (APP_VERSION) and the Android line are separate schemes. Fall back to APP_VERSION if unavailable.
+    let shownVersion = APP_VERSION;
+    if(NATIVE){ try{ const info = await AyyamNative.appInfo(); if(info && info.version) shownVersion = info.version; }catch(e){} }
+    const av = $('appVersionInfo'); if(av) av.textContent = 'أيام · الإصدار ' + shownVersion + (NATIVE ? ' — أندرويد' : ' — ويب');
     if(NATIVE){ const ur=$('appUpdateRow'); if(ur) ur.classList.remove('hidden');
       const cb=$('checkUpdateBtn'); if(cb) cb.addEventListener('click', ()=>{ try{ manualUpdateCheck(); }catch(e){} }); }
   }catch(e){}

@@ -60,9 +60,14 @@ test('evaluateUpdate → "latest" when already on the newest build', () => {
   assert.equal(U.evaluateUpdate({ ok: true, text: JSON.stringify(good), installedVersionCode: 4 }).outcome, 'latest');
   assert.equal(U.evaluateUpdate({ ok: true, text: JSON.stringify(good), installedVersionCode: 9 }).outcome, 'latest');
 });
-test('evaluateUpdate → "network" when the request failed (offline / non-200)', () => {
-  assert.equal(U.evaluateUpdate({ ok: false }).outcome, 'network');
+test('evaluateUpdate → "network" ONLY for a genuine unreachable request (offline / DNS / timeout)', () => {
+  assert.equal(U.evaluateUpdate({ ok: false }).outcome, 'network');                   // back-compat: no reachable flag
+  assert.equal(U.evaluateUpdate({ ok: false, reachable: false }).outcome, 'network');
   assert.equal(U.evaluateUpdate(null).outcome, 'network');
+});
+test('evaluateUpdate → "unavailable" when the server was REACHED but returned an HTTP error (e.g. 404 before update.json is published) — never mislabelled as a connection failure', () => {
+  assert.equal(U.evaluateUpdate({ ok: false, reachable: true, status: 404 }).outcome, 'unavailable');
+  assert.equal(U.evaluateUpdate({ ok: false, reachable: true, status: 503 }).outcome, 'unavailable');
 });
 test('evaluateUpdate → "malformed" on invalid/partial update metadata (no raw error surfaced)', () => {
   assert.equal(U.evaluateUpdate({ ok: true, text: '{not json', installedVersionCode: 1 }).outcome, 'malformed');

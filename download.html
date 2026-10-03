@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>تحميل أيام</title>
+<meta name="theme-color" content="#12161c">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --bg:#0e1217; --bg2:#12161c; --card:#171c24; --line:#232a34;
+    --ink:#f2f5f9; --muted:#9aa6b2; --accent:#4cc3a5; --accent2:#3aa88d; --ring:rgba(76,195,165,.35);
+    --radius:20px; --shadow:0 20px 50px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:system-ui,-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;
+    background:radial-gradient(1200px 600px at 50% -10%, #1a222c 0%, var(--bg) 60%) no-repeat, var(--bg);
+    color:var(--ink); min-height:100dvh; display:flex; align-items:center; justify-content:center;
+    padding:calc(28px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
+    line-height:1.7; -webkit-text-size-adjust:100%;
+  }
+  .wrap{width:100%; max-width:440px}
+  .card{
+    background:linear-gradient(180deg, var(--card), var(--bg2)); border:1px solid var(--line);
+    border-radius:var(--radius); box-shadow:var(--shadow); padding:30px 24px 26px; text-align:center;
+  }
+  .logo{width:84px;height:84px;border-radius:22px;display:block;margin:0 auto 14px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  h1{font-size:1.7rem;margin:.1em 0 .15em;letter-spacing:.2px}
+  .tag{color:var(--muted);font-size:.98rem;margin:0 0 2px}
+  .ver{display:inline-block;margin:12px 0 22px;padding:5px 14px;border:1px solid var(--line);border-radius:999px;color:var(--accent);font-size:.9rem;font-weight:600}
+  .btn{
+    display:flex;align-items:center;justify-content:center;gap:9px;width:100%;
+    padding:15px 18px;border-radius:14px;border:1px solid transparent;cursor:pointer;
+    font-size:1.05rem;font-weight:700;text-decoration:none;margin-bottom:12px;transition:transform .06s ease, filter .15s ease;
+  }
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#07120e;box-shadow:0 10px 24px var(--ring)}
+  .btn.primary:hover{filter:brightness(1.05)}
+  .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+  .btn.ghost:hover{border-color:var(--accent)}
+  .btn .ico{font-size:1.2rem;line-height:1}
+  .steps{text-align:right;margin:20px 2px 0;padding:16px 16px;background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:14px}
+  .steps h2{font-size:.98rem;margin:0 0 10px;color:var(--ink)}
+  .steps ol{margin:0;padding-inline-start:20px;color:var(--muted);font-size:.93rem}
+  .steps li{margin-bottom:7px}
+  .steps li:last-child{margin-bottom:0}
+  .foot{margin-top:20px;color:var(--muted);font-size:.82rem}
+  .foot a{color:var(--accent);text-decoration:none}
+  @media (prefers-color-scheme: light){
+    :root{--bg:#eef1f5;--bg2:#fff;--card:#fff;--line:#e2e7ee;--ink:#131821;--muted:#5c6673;--accent:#1f9c82;--accent2:#17806a;--shadow:0 18px 44px rgba(20,30,48,.14)}
+    body{background:radial-gradient(1200px 600px at 50% -10%, #fff 0%, var(--bg) 60%) no-repeat, var(--bg)}
+    .btn.primary{color:#fff}
+  }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="card">
+      <img class="logo" src="icon-192.png" alt="أيام" width="84" height="84">
+      <h1>أيام</h1>
+      <p class="tag">متابعة مهامك وعباداتك اليومية — بتصميم هادئ ومزامنة آمنة بين أجهزتك.</p>
+      <span class="ver">الإصدار 1.2.0</span>
+
+      <a class="btn primary" href="https://github.com/dhlbmhsn357-wq/-/releases/latest/download/app-release.apk" rel="noopener">
+        <span class="ico">⬇️</span><span>تحميل تطبيق أندرويد</span>
+      </a>
+      <a class="btn ghost" href="/"><span class="ico">🌐</span><span>فتح نسخة الويب</span></a>
+
+      <section class="steps">
+        <h2>تثبيت نسخة أندرويد</h2>
+        <ol>
+          <li>اضغط «تحميل تطبيق أندرويد» وانتظر انتهاء التنزيل.</li>
+          <li>افتح الملف الذي نزّلته.</li>
+          <li>لو طلب الجهاز إذنًا، فعّل «السماح بالتثبيت من هذا المصدر» ثم أكمل.</li>
+          <li>بعد التثبيت، أنشئ حسابك وابدأ فورًا — بريد وكلمة مرور فقط.</li>
+        </ol>
+      </section>
+
+      <p class="foot">تفضّل البقاء على المتصفح؟ <a href="/">استخدم أيام على الويب مباشرة</a> — نفس الحساب ونفس البيانات.</p>
+    </div>
+  </main>
+</body>
+</html>
