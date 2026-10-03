@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/download", "destination": "/download.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",

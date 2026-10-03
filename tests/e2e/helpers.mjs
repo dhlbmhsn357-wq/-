@@ -18,6 +18,17 @@ export async function prepare(page, { key = true, now = null } = {}) {
 }
 
 export async function resetBackend(request) { await request.post('/__ctl/reset'); }
+
+// A brand-new account starts the onboarding tour (P5). Dismiss it so non-onboarding tests can proceed.
+// No-op if it never appears (e.g. legacy mode, or already onboarded).
+export async function skipOnboarding(page) {
+  const skip = page.locator('#onbSkip');
+  try {
+    await skip.waitFor({ state: 'visible', timeout: 10000 });
+    await skip.click();
+    await page.locator('#onbView').waitFor({ state: 'hidden', timeout: 8000 });
+  } catch (e) { /* no tour shown */ }
+}
 export async function ctlDb(request) { return (await request.get('/__ctl/db')).json(); }
 export async function outage(request, mode) { await request.post(`/__ctl/outage?mode=${mode || ''}`); }
 

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>أيام — نظام التصميم</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/components.css">
+<style>
+  /* This page documents the system; it uses ONLY design tokens. */
+  body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-ui);
+    padding:0 0 80px;-webkit-font-smoothing:antialiased;}
+  .ds-doc-top{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:var(--space-md);
+    padding:var(--space-lg);background:var(--color-elevated);border-bottom:1px solid var(--color-border);}
+  .ds-doc-top .brand{font-family:var(--font-display);font-size:28px;}
+  .ds-doc-top .sub{color:var(--color-text-secondary);font-size:var(--text-small);flex:1;}
+  .ds-wrap{max-width:820px;margin:0 auto;padding:var(--space-xl) var(--space-lg);}
+  section{margin:var(--space-4xl) 0;}
+  h2.sec{font-size:var(--text-h2);font-weight:var(--fw-bold);margin:0 0 var(--space-lg);border-inline-start:3px solid var(--color-primary);padding-inline-start:var(--space-md);}
+  .row{display:flex;flex-wrap:wrap;gap:var(--space-md);align-items:center;margin-bottom:var(--space-md);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:var(--space-md);}
+  .swatch{border-radius:var(--radius-md);border:1px solid var(--color-border);overflow:hidden;}
+  .swatch .chip{height:52px;}
+  .swatch .name{padding:6px 8px;font-size:var(--text-caption);color:var(--color-text-secondary);background:var(--color-surface);}
+  .stack{display:flex;flex-direction:column;gap:var(--space-md);}
+  .space-demo{background:color-mix(in srgb,var(--color-primary) 30%,transparent);height:16px;border-radius:var(--radius-sm);}
+  .radius-demo{width:72px;height:52px;background:var(--color-surface);border:1px solid var(--color-border-strong);display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:var(--text-caption);}
+  .shadow-demo{width:110px;height:60px;background:var(--color-surface);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:var(--text-caption);}
+</style>
+</head>
+<body>
+  <header class="ds-doc-top">
+    <span class="brand">أيام</span>
+    <span class="sub">نظام التصميم — التوكنز والمكوّنات (P6)</span>
+    <button class="ds-btn ds-btn-ghost ds-btn-sm" id="themeBtn">تبديل الثيم</button>
+  </header>
+
+  <div class="ds-wrap">
+    <p class="ds-body" style="color:var(--color-text-secondary)">
+      هوية أيام: عربية حديثة، هادئة، فخمة، دافئة، روحانية دون مبالغة. كل ما هنا مبنيّ على توكنز
+      (<code>css/tokens.css</code>) ومكوّنات (<code>css/components.css</code>) تُستخدم في الشاشات لاحقًا (P7).
+    </p>
+
+    <section>
+      <h2 class="sec">الألوان</h2>
+      <div class="grid" id="swatches"></div>
+    </section>
+
+    <section>
+      <h2 class="sec">الطباعة</h2>
+      <div class="stack">
+        <div class="ds-display">أيام — عناوين الهوية</div>
+        <div class="ds-h1">عنوان رئيسي H1</div>
+        <div class="ds-h2">عنوان فرعي H2</div>
+        <div class="ds-h3">عنوان صغير H3</div>
+        <div class="ds-body-lg">نص كبير — قراءة مريحة للعربية مع تباعد أسطر مناسب ١٢٣٤٥.</div>
+        <div class="ds-body">نص أساسي — الجسم الأساسي للواجهة، بأرقام عربية ٠١٢٣٤٥٦٧٨٩.</div>
+        <div class="ds-small">نص صغير — تفاصيل ثانوية.</div>
+        <div class="ds-caption">تعليق — أدق مستوى.</div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="sec">الأزرار</h2>
+      <div class="row">
+        <button class="ds-btn ds-btn-primary">أساسي</button>
+        <button class="ds-btn ds-btn-secondary">ثانوي</button>
+        <button class="ds-btn ds-btn-ghost">شبحي</button>
+        <button class="ds-btn ds-btn-danger">خطر</button>
+        <button class="ds-btn ds-btn-primary" disabled>معطّل</button>
+        <button class="ds-btn ds-btn-primary ds-btn-sm">صغير</button>
+        <button class="ds-icon-btn" aria-label="أيقونة">＋</button>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="sec">الحقول</h2>
+      <div style="max-width:360px">
+        <div class="ds-field"><label class="ds-label" for="f1">البريد الإلكتروني</label>
+          <input class="ds-input" id="f1" type="email" placeholder="name@mail.com"></div>
+        <div class="ds-field"><label class="ds-label" for="f2">كلمة المرور</label>
+          <div class="ds-input-wrap"><input class="ds-input" id="f2" type="password" placeholder="••••••">
+            <button class="ds-reveal" id="reveal" aria-label="إظهار كلمة المرور">👁</button></div></div>
+        <div class="ds-field"><label class="ds-label" for="f3">اختيار</label>
+          <select class="ds-select" id="f3"><option>اليوم فقط</option><option>يوميًا</option><option>أسبوعيًا</option></select></div>
+        <div class="ds-field"><label class="ds-label" for="f4">حقل بخطأ</label>
+          <input class="ds-input is-error" id="f4" aria-invalid="true" value="قيمة غير صحيحة">
+          <span class="ds-error">هذا الحقل غير صالح.</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="sec">الرقائق والشارات وحالات المهمّة</h2>
+      <div class="row">
+        <button class="ds-chip is-active">يوميًا</button>
+        <button class="ds-chip">أسبوعيًا</button>
+        <button class="ds-chip">أيام محددة</button>
+        <span class="ds-badge">نسخة ٥.٣</span>
+      </div>
+      <div class="row">
+        <span class="ds-pill ds-pill-success">مكتمل</span>
+        <span class="ds-pill ds-pill-overdue">ناقص عليك</span>
+        <span class="ds-pill ds-pill-excused">معذور</span>
+        <span class="ds-pill ds-pill-replaced">مُستبدلة</span>
+        <span class="ds-pill ds-pill-warning">تنبيه</span>
+        <span class="ds-pill ds-pill-danger">خطأ</span>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="sec">البطاقات ومهمة نموذجية</h2>
+      <div class="stack">
+        <div class="ds-card"><div class="ds-h3">بطاقة</div><p class="ds-small">سطح بحدود خفيفة وظلّ هادئ.</p></div>
+        <div class="ds-task"><div class="ds-task-check is-done"></div>
+          <div class="ds-task-body"><div class="ds-task-title">أذكار الصباح</div><div class="ds-task-sub">الفجر · يوميًا</div></div>
+          <span class="ds-pill ds-pill-success">تم</span></div>
+        <div class="ds-task"><div class="ds-task-check"></div>
+          <div class="ds-task-body"><div class="ds-task-title">ورد القرآن</div><div class="ds-task-sub">الظهر</div></div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="sec">حالة فارغة · تبويبات · تقدّم · تحميل</h2>
+      <div class="ds-card ds-empty">
+        <div class="ds-empty-emoji">🌱</div><h3 class="ds-empty-title">يومك يبدأ من هنا</h3>
+        <p class="ds-empty-sub">أضف أول مهمة تريد المحافظة عليها.</p>
+        <button class="ds-btn ds-btn-primary">إضافة أول مهمة</button>
+      </div>
+      <div class="ds-tabs" style="max-width:320px;margin-top:var(--space-lg)">
+        <button class="ds-tab is-active">اليوم</button><button class="ds-tab">الأسبوع</button><button class="ds-tab">الشهر</button>
+      </div>
+      <div class="ds-progress" style="max-width:320px;margin-top:var(--space-lg)"><div class="ds-progress-bar" style="width:62%"></div></div>
+      <div class="row" style="margin-top:var(--space-lg)">
+        <div class="ds-skeleton" style="width:180px;height:14px"></div>
+        <div class="ds-spinner"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="sec">التنبيهات</h2>
+      <div class="stack" style="max-width:360px">
+        <div class="ds-toast ds-toast-success">تمّت المزامنة بنجاح.</div>
+        <div class="ds-toast ds-toast-danger">تعذّر الاتصال — سنعيد المحاولة.</div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="sec">المسافات · الأنصاف · الظلال</h2>
+      <div class="stack" id="spaces"></div>
+      <div class="row" style="margin-top:var(--space-lg)">
+        <div class="radius-demo" style="border-radius:var(--radius-sm)">sm</div>
+        <div class="radius-demo" style="border-radius:var(--radius-md)">md</div>
+        <div class="radius-demo" style="border-radius:var(--radius-lg)">lg</div>
+        <div class="radius-demo" style="border-radius:var(--radius-xl)">xl</div>
+        <div class="radius-demo" style="border-radius:var(--radius-pill)">pill</div>
+      </div>
+      <div class="row" style="margin-top:var(--space-xl)">
+        <div class="shadow-demo" style="box-shadow:var(--shadow-sm)">sm</div>
+        <div class="shadow-demo" style="box-shadow:var(--shadow-md)">md</div>
+        <div class="shadow-demo" style="box-shadow:var(--shadow-lg)">lg</div>
+      </div>
+    </section>
+  </div>
+
+  <script src="js/design-system-demo.js"></script>
+</body>
+</html>

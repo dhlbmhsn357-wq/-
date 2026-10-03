@@ -1,0 +1,17 @@
+# Keep the web/PWA production deploy to the app itself. Everything below is dev/test/native tooling
+# that must NOT be served from production (CI, E2E mocks, the Capacitor native shell, DB migrations,
+# build scripts, docs). The web app only needs: index.html, download.html, js/, css/, icons, bg.jpg,
+# manifest.webmanifest, sw.js, vercel.json.
+tests/
+test-results/
+scripts/
+android/
+supabase/
+native-web/
+docs/
+.github/
+playwright.config.mjs
+capacitor.config.json
+capacitor.config.e2e.json
+update.json
+design-system.html

@@ -16,7 +16,13 @@ async function seedDays(page, days, { completeAll = true } = {}) {
     await page.waitForSelector('.task');
     const n = await page.locator('.task .check').count();
     const upto = completeAll ? n : Math.ceil(n / 2);
-    for (let i = 0; i < upto; i++) await page.locator('.task .check').nth(i).click();
+    for (let i = 0; i < upto; i++) {
+      const c = page.locator('.task .check').nth(i);
+      // Centre the checkbox before tapping so the fixed bottom-corner FAB (which floats above the bottom nav)
+      // can never intercept the click — the list has ample bottom padding, so any row can scroll clear.
+      await c.evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
+      await c.click();
+    }
     await waitSynced(page);
   }
 }
@@ -25,9 +31,11 @@ test('insights: sparse state before enough data', async ({ page }) => {
   await prepare(page, { key: true });
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
-  await page.locator('.task .check').first().click();   // 1 recorded day
+  const c0 = page.locator('.task .check').first();
+  await c0.evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
+  await c0.click();   // 1 recorded day (centre first so the fixed FAB can't intercept)
   await waitSynced(page);
-  await page.locator('#openReports').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="progress"]').click();
   await expect(page.locator('#reportsView')).toBeVisible();
   await expect(page.locator('#insBody')).toContainText('لسه بنكوّن صورتك');
   await expect(page.locator('#insBody')).toContainText('/ ٥ أيام');
@@ -36,7 +44,7 @@ test('insights: sparse state before enough data', async ({ page }) => {
 test('insights: with enough recorded days the sections render', async ({ page }) => {
   await prepare(page, { key: true });
   await seedDays(page, ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26']);
-  await page.locator('#openReports').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="progress"]').click();
   await expect(page.locator('#reportsView')).toBeVisible();
   await expect(page.locator('#reportsView .brand-strong')).toHaveText('تحليل الأداء');
   await expect(page.locator('#insBody')).toContainText('أيام مسجلة');   // summary card rendered
@@ -52,7 +60,7 @@ test('insights: no horizontal overflow at 390px', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await prepare(page, { key: true });
   await seedDays(page, ['2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26']);
-  await page.locator('#openReports').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="progress"]').click();
   await expect(page.locator('#insBody')).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
   expect(overflow).toBe(false);

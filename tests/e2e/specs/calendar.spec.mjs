@@ -7,7 +7,7 @@ test('calendar: leap-year month renders the right cell count and offset, today h
   await prepare(page, { key: true, now: '2028-02-15T10:00:00' }); // February 2028 = leap (29 days)
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   await expect(page.locator('#calendarView')).toBeVisible();
   await expect(page.locator('#calTitle')).toContainText('فبراير');
   await expect(page.locator('#calTitle')).toContainText('٢٠٢٨');
@@ -24,7 +24,7 @@ test('calendar: leap-year month renders the right cell count and offset, today h
 test('calendar: month navigation (prev/next) and back-to-today', async ({ page }) => {
   await prepare(page, { key: true, now: '2026-09-15T10:00:00' });
   await page.goto('/');
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   await expect(page.locator('#calTitle')).toContainText('سبتمبر');
   await expect(page.locator('#calToday')).toBeHidden();          // already on current month
   await page.locator('#calPrev').click();
@@ -41,7 +41,7 @@ test('calendar: month navigation (prev/next) and back-to-today', async ({ page }
 test('calendar: year boundary (Dec → Jan)', async ({ page }) => {
   await prepare(page, { key: true, now: '2026-12-10T10:00:00' });
   await page.goto('/');
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   await expect(page.locator('#calTitle')).toContainText('ديسمبر');
   await page.locator('#calNext').click();
   await expect(page.locator('#calTitle')).toContainText('يناير');
@@ -54,7 +54,7 @@ test('calendar: click today → daily overview shows live progress and completed
   await expect(page.locator('.task').first()).toBeVisible();
   await page.locator('.task .check').first().click();            // complete one task today
   await waitSynced(page);
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   await page.locator('#calGrid .cal-cell.today').click();
   await expect(page.locator('#dayOverlay')).toHaveClass(/show/);
   await expect(page.locator('#dayBody')).toContainText('أنجزت'); // completed section present
@@ -66,7 +66,7 @@ test('calendar: an unrecorded past day shows the honest "not tracked" message, n
   await prepare(page, { key: true, now: '2026-09-28T10:00:00' });
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   // an earlier day of the month with no log → unrecorded (default schedule expects tasks, but none tracked)
   await page.locator('#calGrid .cal-cell:not(.empty):not(.future)').first().click();
   await expect(page.locator('#dayOverlay')).toHaveClass(/show/);
@@ -77,7 +77,7 @@ test('calendar: no horizontal overflow at 390px (mobile RTL)', async ({ page }) 
   await page.setViewportSize({ width: 390, height: 844 });
   await prepare(page, { key: true });
   await page.goto('/');
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   await expect(page.locator('#calGrid')).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
   expect(overflow).toBe(false);

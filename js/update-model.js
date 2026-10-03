@@ -8,6 +8,12 @@
   const SHA256_RE = /^[0-9a-f]{64}$/i;
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
   const posInt = (v) => Number.isInteger(v) && v > 0;
+  // Release notes → a clean array of short lines (accepts an array, or a single string as one line).
+  function normalizeNotes(n) {
+    if (Array.isArray(n)) return n.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim().slice(0, 140)).slice(0, 8);
+    if (typeof n === 'string' && n.trim()) return [n.trim().slice(0, 140)];
+    return [];
+  }
 
   // Parse + STRICTLY validate an update manifest. Returns a normalized object or null (never throws).
   // Security: apkUrl MUST be https (no cleartext, no file://); sha256 MUST be 64-hex (verified after
@@ -28,7 +34,7 @@
       apkUrl,
       sha256,
       mandatory: m.mandatory === true,
-      notes: typeof m.notes === 'string' ? m.notes : '',
+      notes: normalizeNotes(m.notes),   // always an array of short lines (may be empty)
     };
   }
 
@@ -54,5 +60,24 @@
     return typeof a === 'string' && typeof b === 'string' && SHA256_RE.test(a) && a.toLowerCase() === String(b).toLowerCase();
   }
 
-  global.AyyamUpdate = { parseManifest, isUpdateAvailable, shouldCheck, shaMatches, DEFAULT_INTERVAL };
+  // Classify the OUTCOME of a MANUAL update check from the raw fetch result + the installed build, so a
+  // tapped "check for update" button can always give deterministic, non-silent feedback. Pure (no I/O).
+  // Four failure states are kept DISTINCT on purpose (never "check your connection" for everything):
+  //   { ok:false, reachable:false } → 'network'     (offline / DNS / timeout — the server wasn't reached)
+  //   { ok:false, reachable:true }  → 'unavailable'  (reached the server but it answered with an HTTP
+  //                                                   error, e.g. 404 before update.json is published)
+  //   ok but text not a manifest    → 'malformed'    (reached + got a body, but it isn't a valid manifest)
+  //   valid manifest, not newer     → 'latest'
+  //   valid manifest, newer         → 'available'    (+ manifest)
+  // `reachable` defaults to false, so an old caller passing just { ok:false } still classifies as 'network'.
+  function evaluateUpdate(res) {
+    res = res || {};
+    if (!res.ok) return { outcome: res.reachable === true ? 'unavailable' : 'network' };
+    const manifest = parseManifest(res.text);
+    if (!manifest) return { outcome: 'malformed' };
+    if (!isUpdateAvailable(manifest, res.installedVersionCode)) return { outcome: 'latest' };
+    return { outcome: 'available', manifest };
+  }
+
+  global.AyyamUpdate = { parseManifest, isUpdateAvailable, shouldCheck, shaMatches, normalizeNotes, evaluateUpdate, DEFAULT_INTERVAL };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

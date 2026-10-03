@@ -43,7 +43,7 @@ test('calendar: month % is labelled "أداء الأيام المسجلة" and t
   await expect(page.locator('.task').first()).toBeVisible();
   // give today some activity so the live class resolves
   await page.locator('.task .check').first().click();
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   await expect(page.locator('#calSummary')).toContainText('أداء الأيام المسجلة'); // renamed from "نسبة الشهر"
   await expect(page.locator('#calGrid .cal-cell.today')).toHaveCount(1);
   await expect(page.locator('#calGrid .cal-cell.today .cal-dot.live')).toHaveCount(1); // live progress dot

@@ -48,7 +48,7 @@ test('full journey: recurrence + edit/delete scope + calendar + insights compose
   await expect(page.locator('.task-title', { hasText: 'أسبوعي' })).toHaveCount(0);
 
   // calendar opens on the current month with today highlighted; day overview opens
-  await page.locator('#openCalendar').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="calendar"]').click();
   await expect(page.locator('#calTitle')).toContainText('سبتمبر');
   await expect(page.locator('#calGrid .cal-cell.today')).toHaveCount(1);
   await page.locator('#calGrid .cal-cell.today').click();
@@ -57,7 +57,7 @@ test('full journey: recurrence + edit/delete scope + calendar + insights compose
   await page.locator('#closeCalendar').click();
 
   // insights opens (sparse — only today recorded)
-  await page.locator('#openReports').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="progress"]').click();
   await expect(page.locator('#reportsView .brand-strong')).toHaveText('تحليل الأداء');
   await expect(page.locator('#insBody')).toContainText('لسه بنكوّن صورتك');
 });

@@ -87,7 +87,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.2.1'; // bump per release; kept in step with sw.js SW_VERSION
+  const APP_VERSION = '5.3.0'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
   // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
   // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
@@ -95,6 +95,11 @@
   // See js/update-model.js (validation) and update.json in the repo (format example).
   const UPDATE_MANIFEST_URL = 'https://github.com/dhlbmhsn357-wq/-/releases/latest/download/update.json';
   const LS_UPDATE_CHECK = 'ayyam_update_check_v1';
+  // Check for updates soon after any app open (not once per 6h): a 20-min throttle prevents abuse while never
+  // hiding a published update for long. Used for the native APK check; the web SW checks on load + on focus.
+  const NATIVE_UPDATE_INTERVAL = 20 * 60 * 1000;
+  // Notes shown in the WEB update prompt (Android reads notes from update.json). Keep in step with a release.
+  const RELEASE_NOTES = ['حساب شخصي ومزامنة آمنة بين أجهزتك', 'تجربة تعريفية محسّنة للمستخدم الجديد', 'شاشة مستقلة للروتين الأسبوعي', 'شريط تنقّل جديد وأسهل', 'تحسينات كبيرة في المزامنة والعمل بدون إنترنت', 'تحسين تجربة الإعدادات والإشعارات', 'إصلاحات مهمة لاستقرار الروتين والبيانات'];
 
   const LS_TPL = 'ayyam_template_v1';
   const LS_LOG = 'ayyam_logs_v1';
@@ -116,7 +121,8 @@
       saved:  {text:'☁️ تمت المزامنة', show:true},
       error:  {text:'⚠️ تعذّرت المزامنة — محفوظ على الجهاز', show:true},
       offline:{text:'📴 غير متصل — محفوظ على الجهاز، سيُرفع لاحقًا', show:true},
-      'need-key':{text:'🔑 أدخل مفتاح المزامنة', show:true},
+      'need-key':{text:'☁️ سجّل الدخول للمزامنة', show:true},
+      'need-auth':{text:'☁️ سجّل الدخول للمزامنة', show:true},
     };
     // A failed local save takes precedence: never show "saved" when the device could not store it.
     const s = storageError
@@ -212,7 +218,7 @@
   async function initStorage(){
     try{
       if(!(typeof AyyamStore !== 'undefined' && AyyamStore.available() && M)) throw new Error('no idb/model');
-      store = await AyyamStore.open();
+      store = await AyyamStore.open(accountMode ? AC().dbNameFor(accountUid) : undefined);
       await store.migrateFromLocalStorage(k=>{ try{ return localStorage.getItem(k); }catch(e){ return null; } }, sanitizeBundle);
       const stateRaw = await store.getState();
       const baseRaw = await store.getBase();
@@ -329,7 +335,10 @@
     // load/import/export/round-trip. cleanRoutines mirrors js/routines-model.js.
     const routines = (window.AyyamRoutines ? window.AyyamRoutines.cleanRoutines(src.routines) : {});
     const migrationDate = DATE_KEY_RE.test(src.migrationDate) ? src.migrationDate : '';
-    return {template, logs, prefs, tplArchive, routines, migrationDate};
+    // migrationVersion: the one-time-migration signal. Persisted (via sync-model migv register) so migration
+    // is PERMANENT and never re-derives routines from the retained legacy template on a later load/pull.
+    const migrationVersion = (Number.isFinite(src.migrationVersion) && src.migrationVersion >= 1) ? 1 : 0;
+    return {template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion};
   }
 
   // The v2 conflict engine lives in js/sync-model.js (LWW registers + tombstones + epoch). The old
@@ -341,8 +350,8 @@
       .finally(()=> clearTimeout(t));
   }
   const clone = o => JSON.parse(JSON.stringify(o));
-  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, migrationDate}; }
-  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; migrationDate = s.migrationDate || ''; }
+  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion}; }
+  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; migrationDate = s.migrationDate || ''; migrationVersion = (s.migrationVersion >= 1) ? 1 : 0; }
 
   // Applies a merged/adopted enriched value to the visible state and refreshes the view.
   async function adoptEnriched(en, persist){
@@ -351,7 +360,7 @@
     if(persist) await persistEnrichedState(en);
     applyPrefs();
     if(!$('mainView').classList.contains('hidden')) render();
-    if(!$('settingsView').classList.contains('hidden')){ renderTplDays(); renderTplTasks(); }
+    if($('routineView') && !$('routineView').classList.contains('hidden')){ renderTplDays(); renderTplTasks(); }
     if(!$('reportsView').classList.contains('hidden')) renderReports();
     scheduleWidgetPush(); // adopt/merge/pull/reset changed today's data → refresh widget snapshot
     scheduleNotifPlan();
@@ -412,6 +421,401 @@
     return data;
   }
 
+  // ---------- account / session (P2) ----------
+  // accountMode=false → the shipped legacy path (device key, id='main', ayyam_pull/commit) UNCHANGED.
+  // accountMode=true  → an authenticated session syncs its OWN per-user row via the authenticated *_v2 RPCs.
+  const AC = () => globalThis.AyyamAccount;
+  let accountMode = false, accountUid = null, sessionExpired = false;
+  const LS_MIG_OP = 'ayyam_migration_opid_v1';   // stable op id → resume-safe migration commit
+  function resolveSyncBackend(){
+    if(!AC() || !sb) return null;
+    if(accountMode) return AC().v2Backend(sb);
+    const key = getDeviceKey();
+    return key ? AC().legacyBackend(sb, key) : null;   // legacy needs the device key
+  }
+  // A sync got 'unauthorized': in account mode the JWT expired (re-auth, stay usable offline); in legacy
+  // mode the device key was wrong (re-prompt). Never deletes local data.
+  function handleAuthReject(){
+    if(accountMode){ sessionExpired = true; syncState = 'need-auth'; }
+    else { needsKey = true; syncState = 'need-key'; setDeviceKey(''); }
+  }
+  function migrationOpId(){
+    try{ let v = localStorage.getItem(LS_MIG_OP); if(!v){ v = newId(); localStorage.setItem(LS_MIG_OP, v); } return v; }
+    catch(e){ return newId(); }
+  }
+  // Migrate this legacy install's data into the signed-in account, ONCE. Recovery snapshot → claim (if a
+  // device key exists) → deterministic merge with local+pending → CAS commit → verify → mark complete.
+  // Idempotent/resumable (stable op id). Returns { status }.
+  async function runAccountMigration(){
+    if(!(accountMode && AC() && sb && M)) return { status:'unavailable' };
+    const backend = AC().v2Backend(sb);
+    const key = getDeviceKey();
+    if(store){ try{ await store.saveRecovery({ reason:'pre-account-migration', data: M.materialize(enriched) }); }catch(e){} }
+    const opId = migrationOpId();
+    try{
+      if(key){
+        return await AC().migrate(backend, { localEnriched: enriched, migrationOpId: opId, now: Date.now(), deviceKey: key });
+      }
+      // keyless local-only install: nothing to claim — adopt local data into the fresh account row.
+      await backend.begin();
+      const p = await backend.pull();
+      const acctEn = p && p.exists ? M.toEnriched(p.data, 1) : M.empty(0);
+      const merged = M.pruneTombstones(M.merge(M.empty(0), enriched, acctEn).merged, Date.now());
+      const c = await backend.commit(p && p.exists ? p.revision : 0, merged, opId, 'import');
+      if(c && (c.status==='ok' || c.status==='duplicate')){ await backend.complete(); return { status:'ok' }; }
+      return { status:(c && c.status) || 'error' };
+    }catch(e){ return { status:'error', message:String(e && e.message || e) }; }
+  }
+  // Auth transitions switch the DB context, so we do it with a controlled reload (a fresh boot opens the
+  // right per-user DB and pulls that account's data). Sign-in from legacy runs the one-time migration first;
+  // sign-out/switch flushes the outbox first. The initial replay event is ignored (boot already handled it).
+  let authReady = false, authBusy = false;
+  async function onAuthChanged(session, event){
+    // A password-reset link established a short recovery session → prompt for a new password (no reload).
+    if(event === 'PASSWORD_RECOVERY'){ try{ openAuth('reset', { dismissible:false }); }catch(e){} return; }
+    if(!authReady || authBusy) return;
+    const newUid = AC() ? AC().userIdOf(session) : null;
+    if(newUid === accountUid) return;   // token refresh / no context change
+    authBusy = true;
+    try{
+      if(newUid && !accountMode){
+        accountMode = true; accountUid = newUid;         // target the account for migration + v2 sync
+        // Show a clear, honest progress screen while we link this device's data into the account. Data is
+        // never lost (a recovery snapshot is written first); the reload afterwards lands in the account DB.
+        const AU = globalThis.AyyamAuthUI;
+        const hasLegacyData = (function(){ try{ return !enrichedIsEmpty(); }catch(e){ return false; } })() || !!getDeviceKey();
+        try{ if(AU) AU.migrating({ title: hasLegacyData ? 'جارٍ ربط بياناتك بحسابك…' : 'جارٍ تجهيز حسابك…', sub:'لا تُغلق التطبيق — نحفظ كل بياناتك بأمان.' }); }catch(e){}
+        try{ await runAccountMigration(); }catch(e){}    // idempotent; reload pulls the account data either way
+      } else {
+        try{ if(navigator.onLine!==false && isPending()) await syncNow('sync'); }catch(e){} // flush before switching
+      }
+    }finally{ try{ location.reload(); }catch(e){} }
+  }
+  // Minimal auth actions (wired to the Settings "الحساب" section).
+  async function doSignIn(email, password){
+    if(!(AC() && sb)) return { error:{ message:'unavailable' } };
+    const r = await AC().signIn(sb, email, password);
+    return r;
+  }
+  async function doSignUp(email, password, name){
+    if(!(AC() && sb)) return { error:{ message:'unavailable' } };
+    return AC().signUp(sb, email, password, name, NATIVE ? NATIVE_VERIFY_REDIRECT : undefined);
+  }
+  async function doSignOut(){
+    if(!(AC() && sb)) return;
+    if(isPending() && navigator.onLine!==false){ try{ await syncNow('sync'); }catch(e){} }
+    if(isPending() && !confirm('لديك تغييرات لم تتم مزامنتها بعد. تسجيل الخروج لن يحذفها، وستُرفع عند دخولك مرة أخرى. متابعة؟')) return;
+    // Account isolation on sign-out: clear the widget snapshot AND cancel this account's scheduled reminders,
+    // so the next account never inherits account A's widget or notifications.
+    try{ if(NATIVE) await AyyamNative.updateWidgetSnapshot(null); }catch(e){}
+    try{ if(NATIVE) await AyyamNative.clearNotif(); }catch(e){}
+    await AC().signOut(sb);
+    // onAuthChanged(null) will flush + reload into the legacy DB.
+  }
+  // Native deep-link redirects (Android/Capacitor). The email link returns to the app; AndroidManifest already
+  // catches every ayyam:// URL. On web we return to the app's own URL (supabase-js detectSessionInUrl handles it).
+  const NATIVE_RESET_REDIRECT = 'ayyam://reset';
+  const NATIVE_VERIFY_REDIRECT = 'ayyam://auth';
+  async function doForgot(email){
+    if(!(AC() && sb)) return { error:{ message:'unavailable' } };
+    const redirect = NATIVE ? NATIVE_RESET_REDIRECT : ((location.origin || '') + (location.pathname || '/'));
+    return AC().resetPassword(sb, email, redirect);
+  }
+  async function doReset(newPassword){
+    if(!(AC() && sb)) return { error:{ message:'unavailable' } };
+    return AC().updatePassword(sb, newPassword);
+  }
+  // Never surface a raw Supabase error. Maps every known failure — plus offline / rate-limit / server-down —
+  // to a calm Arabic sentence. `ctx` is the action ('signin'|'signup'|'forgot'|'reset') for wording nuance.
+  function authMessage(e, ctx){
+    if(navigator.onLine === false) return 'لا يوجد اتصال بالإنترنت. تحقّق من الشبكة وحاول مجددًا.';
+    const status = (e && (e.status || e.statusCode)) || 0;
+    const m = String((e && e.message)||'').toLowerCase();
+    if(status === 429 || m.includes('rate') || m.includes('too many')) return 'محاولات كثيرة خلال وقت قصير. انتظر قليلًا ثم أعد المحاولة.';
+    if(status >= 500 || m.includes('unavailable') || m.includes('gateway') || m.includes('timeout') || m.includes('network') || m.includes('failed to fetch')) return 'الخدمة غير متاحة مؤقتًا. حاول بعد قليل.';
+    if(m.includes('not confirmed') || m.includes('not verified') || m.includes('confirm')) return 'لم يتم تأكيد بريدك بعد. افتح رسالة التأكيد في بريدك أولًا.';
+    if(m.includes('invalid login') || m.includes('invalid credential') || (m.includes('invalid') && ctx==='signin')) return 'البريد أو كلمة المرور غير صحيحة.';
+    if(m.includes('registered') || m.includes('exists') || m.includes('already')) return 'هذا البريد مسجّل بالفعل. جرّب تسجيل الدخول.';
+    if(m.includes('password') && m.includes('should')) return 'كلمة المرور قصيرة (٦ أحرف على الأقل).';
+    if(m.includes('password')) return 'كلمة المرور غير مقبولة (٦ أحرف على الأقل).';
+    if(m.includes('email') && (m.includes('invalid') || m.includes('valid'))) return 'البريد الإلكتروني غير صالح.';
+    return 'تعذّر إتمام العملية. حاول مرة أخرى.';
+  }
+  const authErr = (e)=> authMessage(e, 'signin'); // back-compat
+
+  // Open the premium full-screen auth experience. `o.showEscapes` (first-run gate only) offers "continue
+  // without an account" + a tucked-away legacy sync-key path; a genuinely new user never sees the key concept.
+  function openAuth(mode, o){
+    o = o || {};
+    const AU = globalThis.AyyamAuthUI; if(!AU){ return; }
+    AU.init({
+      onSubmit: async (m, v)=>{
+        AU.message('', '');
+        if(m==='signup'){
+          const nm = (v.name||'').trim();
+          if(nm.length < 2 || nm.length > 60){ AU.message('أدخل اسمك (حرفان على الأقل).', 'error'); return; }
+          if(!v.email){ AU.message('أدخل بريدك الإلكتروني.', 'error'); return; }
+          if((v.password||'').length < 6){ AU.message('كلمة المرور ٦ أحرف على الأقل.', 'error'); return; }
+          AU.busy(true); AU.message('جارٍ إنشاء حسابك…', 'info');
+          const r = await doSignUp(v.email, v.password, nm);
+          if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'signup'), 'error'); return; }
+          const hasSession = r && r.data && r.data.session;
+          if(!hasSession){ // project requires email confirmation → no session yet
+            AU.busy(false); AU.setMode('signin');
+            AU.message('أنشأنا حسابك. افتح رسالة التأكيد في بريدك ثم سجّل الدخول.', 'success');
+            return;
+          }
+          // session established → onAuthChanged handles migration + reload
+          sessionActive = true; track('signup_completed', v.name || v.email);
+          AU.message('تم — جارٍ تجهيز حسابك…', 'success');
+          if(o.reloadOnSuccess) setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 700);
+        } else if(m==='signin'){
+          if(!v.email || !v.password){ AU.message('أدخل البريد وكلمة المرور.', 'error'); return; }
+          AU.busy(true); AU.message('جارٍ تسجيل الدخول…', 'info');
+          const r = await doSignIn(v.email, v.password);
+          if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'signin'), 'error'); return; }
+          sessionActive = true; track('login_success');
+          AU.message('تم — جارٍ فتح حسابك…', 'success');
+          if(o.reloadOnSuccess) setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 700);
+        } else if(m==='forgot'){
+          if(!v.email){ AU.message('أدخل بريدك الإلكتروني.', 'error'); return; }
+          AU.busy(true); AU.message('جارٍ الإرسال…', 'info');
+          const r = await doForgot(v.email);
+          AU.busy(false);
+          if(r && r.error){ AU.message(authMessage(r.error,'forgot'), 'error'); return; }
+          AU.message('إن كان لديك حساب بهذا البريد، فستصلك رسالة بها رابط لإعادة التعيين.', 'success');
+        } else if(m==='reset'){
+          if((v.password||'').length < 6){ AU.message('كلمة المرور ٦ أحرف على الأقل.', 'error'); return; }
+          AU.busy(true); AU.message('جارٍ الحفظ…', 'info');
+          const r = await doReset(v.password);
+          if(r && r.error){ AU.busy(false); AU.message(authMessage(r.error,'reset'), 'error'); return; }
+          AU.message('تم تحديث كلمة المرور. جارٍ الدخول…', 'success');
+          setTimeout(()=>{ try{ location.reload(); }catch(e){} }, 900);
+        }
+      },
+      onClose: ()=>{ AU.close(); if(typeof o.onClose==='function') o.onClose(); },
+      onOffline: async ()=>{ AU.close(); if(typeof o.onOffline==='function') await o.onOffline(); },
+    });
+    AU.open(mode||'signin', { dismissible: o.dismissible !== false, showEscapes: !!o.showEscapes });
+  }
+
+  function displayNameOf(sess){ try{ const su = sess && sess.user; return (su && su.user_metadata && su.user_metadata.display_name) || ''; }catch(e){ return ''; } }
+  // Personalised greeting on Today — reuses the existing quote line (NO extra height, so the fixed FAB never
+  // floats over a task). Falls back to the email local-part for a legacy account without a stored name.
+  function updateGreeting(){
+    try{
+      if(!accountMode || !accountDisplayName) return;
+      const q = document.querySelector('.hero .quote');
+      if(q) q.textContent = 'أهلًا، ' + accountDisplayName;
+    }catch(e){}
+  }
+  async function setupAccountUI(){
+    const box = $('accountBox'); if(!box || !AC() || !sb) return;
+    let sess=null; try{ sess = await AC().getSession(sb); }catch(e){}
+    const uid = AC().userIdOf(sess);
+    const email = (sess && sess.user && sess.user.email) || '';
+    const name = displayNameOf(sess) || (email ? email.split('@')[0] : '');
+    if(uid){
+      box.innerHTML = `<div class="acct-row"><span class="acct-you">${name?escapeHtml(name):'مسجّل الدخول'}</span></div>
+        ${email?`<p class="acct-hint" style="direction:ltr;text-align:start;margin-top:0;">${escapeHtml(email)}</p>`:''}
+        <p class="acct-hint">بياناتك تُزامَن بأمان مع حسابك على كل أجهزتك.</p>
+        <button class="btn ghost" id="acctSignOut">تسجيل الخروج</button>`;
+      const so=$('acctSignOut'); if(so) so.addEventListener('click', doSignOut);
+    } else {
+      box.innerHTML = `<p class="acct-hint">أنشئ حسابًا لمزامنة بياناتك بأمان بين أجهزتك — بدون أي مفتاح.</p>
+        <button class="btn primary acct-open" id="acctOpenAuth">تسجيل الدخول أو إنشاء حساب</button>`;
+      const ob=$('acctOpenAuth'); if(ob) ob.addEventListener('click', ()=> openAuth('signin', { dismissible:true }));
+    }
+  }
+
+  // ---------- product analytics (P4): privacy-conscious events. NEVER any content — only an event name from
+  // a fixed whitelist + platform + app version + the user's own display name. Fire-and-forget; account-only.
+  const PLATFORM = NATIVE ? 'android' : 'web';
+  let sessionActive = false, accountDisplayName = null;
+  async function track(name, displayName){
+    try{
+      if(!sb || !sessionActive) return;
+      await withTimeout(sb.rpc('ayyam_track', { p_name:name, p_platform:PLATFORM, p_app_version:APP_VERSION,
+        p_display_name: displayName || accountDisplayName || null }), SYNC_TIMEOUT_MS);
+    }catch(e){}
+  }
+  // ---------- first-time onboarding (P5): a calm spotlight tour with REAL server-side completion. Shown only
+  // for a first account (server onboarding_completed_at is null); resumable (server step); skip/replay safe.
+  // A REAL guided tour: each step navigates to its screen (`nav`), opens the relevant UI (`open`) and spotlights
+  // an actual element (`target`). A centered step (no target) is used ONLY where a new, empty account has no
+  // element to point at (e.g. flexibility actions live on a task's menu, and there are no tasks yet).
+  const ONBOARDING_STEPS = [
+    { nav:'today', target:'.hero', title:'صفحة اليوم', body:'هنا جدول يومك بحسب مواقيت الصلاة — تابع ما أنجزته وما تبقّى بلمحة.' },
+    { nav:'today', target:'#fabAdd', title:'إضافة مهمة', body:'من هذا الزر تضيف مهمة أو وردًا جديدًا في أي وقت.' },
+    { nav:'today', open:'add', target:'#recPick', title:'التكرار', body:'حدد هل المهمة اليوم فقط، يوميًا، أسبوعيًا أو أيامًا محددة.' },
+    { icon:'🌿', title:'المرونة', body:'عند الحاجة: علّم مهمتك «معذور» بلا تقصير، أو «استبدلها» بأخرى — من قائمة المهمة.' },
+    { nav:'today', target:'#bottomNav', title:'شريط التنقّل', body:'من الشريط السفلي تنتقل بين اليوم والتقويم والروتين والتقدّم والإعدادات.' },
+    { nav:'routine', target:'#bottomNav .bnav-item[data-screen="routine"]', title:'الروتين', body:'رتّب أورادك المتكررة لكل يوم من تبويب «الروتين».' },
+    { nav:'routine', target:'#tplAddTask', title:'إضافة روتين', body:'اختر اليوم من الأعلى ثم اضغط «إضافة روتين»: اكتب الاسم، حدد الوقت/الفترة، واحفظ — وكرّر لبقية أيام أسبوعك.' },
+    { nav:'today', icon:'✨', title:'ابدأ يومك', body:'كل يوم فرصة جديدة. لنبدأ خطوتك الأولى في أيام.', cta:'ابدأ يومك' },
+  ];
+  // Per-step preparation for the guided tour: switch to the step's screen and open/close the add sheet so the
+  // spotlight lands on a REAL, visible element. Explanatory only — never writes user data.
+  async function onboardingBeforeStep(step){
+    try{
+      if(!step || step.open !== 'add'){ try{ closeAddSheet(); }catch(e){} }
+      if(step && step.nav){ showScreen(step.nav); }
+      if(step && step.open === 'add'){ try{ showScreen('today'); openAddSheet(); }catch(e){} }
+    }catch(e){}
+    // let the screen switch / sheet open settle before the tour measures + spotlights the target
+    await new Promise(function(res){ requestAnimationFrame(function(){ requestAnimationFrame(res); }); });
+  }
+  // Suggested starter items — added as daily routines ONLY when the user explicitly ticks them.
+  const STARTER_SUGGESTIONS = [
+    { id:'st-fajr-sunnah',    title:'ركعتا الفجر',   period:'fajr' },
+    { id:'st-morning-adhkar', title:'أذكار الصباح',  period:'fajr' },
+    { id:'st-quran-wird',     title:'ورد القرآن',    period:'dhuhr' },
+    { id:'st-evening-adhkar', title:'أذكار المساء',  period:'maghrib' },
+    { id:'st-witr',           title:'الوتر',         period:'isha' },
+    { id:'st-exercise',       title:'رياضة',         period:'asr' },
+  ];
+  let onboardingActive = false;
+  async function checkOnboarding(){
+    try{
+      if(!(sb && accountMode && globalThis.AyyamOnboarding)) return;
+      const { data, error } = await withTimeout(sb.rpc('ayyam_onboarding_get'), SYNC_TIMEOUT_MS);
+      if(error || !data || data.status!=='ok' || data.completed) return; // already onboarded (server truth)
+      startOnboarding(Number(data.step)||0);
+    }catch(e){}
+  }
+  function startOnboarding(startStep){
+    if(onboardingActive) return; onboardingActive = true;
+    try{ $('mainView').classList.remove('hidden'); $('reportsView').classList.add('hidden'); $('calendarView') && $('calendarView').classList.add('hidden'); $('settingsView').classList.add('hidden'); }catch(e){}
+    globalThis.AyyamOnboarding.startTour({
+      steps: ONBOARDING_STEPS,
+      startStep: startStep,
+      onBeforeStep: onboardingBeforeStep,   // navigate + open the right UI so each step spotlights a real element
+      onProgress: (i)=>{ try{ sb.rpc('ayyam_onboarding_progress', { p_step:i, p_done:false }); }catch(e){} },
+      onDone: async (via)=>{
+        onboardingActive = false;
+        try{ closeAddSheet(); }catch(e){}           // leave no sheet open from the recurrence step
+        try{ showScreen('today'); }catch(e){}       // always hand back on Today, never the routine tab
+        try{ await withTimeout(sb.rpc('ayyam_onboarding_progress', { p_step:ONBOARDING_STEPS.length-1, p_done:true, p_via:via }), SYNC_TIMEOUT_MS); }catch(e){}
+        // Offer the optional starter ONLY on a genuine finish of a still-empty account (never on skip/replay).
+        if(via==='finished' && enrichedIsEmpty() && !onboardingReplay){ openStarterSetup(); }
+        onboardingReplay = false;
+      },
+    });
+  }
+  let onboardingReplay = false;
+  function replayOnboarding(){ onboardingReplay = true; startOnboarding(0); }
+  function openStarterSetup(){
+    if(!globalThis.AyyamOnboarding) return;
+    globalThis.AyyamOnboarding.startStarter({
+      suggestions: STARTER_SUGGESTIONS,
+      onApply: async (ids)=>{ await applyStarter(ids); },
+      onSkip: ()=>{ render(); },
+    });
+  }
+  // Add ONLY the explicitly-selected suggestions, as daily routines from today forward. Never automatic.
+  async function applyStarter(ids){
+    try{
+      if(!ids || !ids.length){ render(); return; }
+      await ensureRoutinesActive(); // new empty account: turn the recurrence engine on so daily routines show
+      const from = todayKey();
+      ids.forEach((id)=>{
+        const sug = STARTER_SUGGESTIONS.find(s=>s.id===id); if(!sug) return;
+        const rec = { freq:'daily', days:[], from, to:null };
+        const nidv = nid();
+        routines[nidv] = { id:nidv, seriesId:nidv, title:sug.title, time:'', timeValue:'', period:sug.period, order:Object.keys(routines).length, rec };
+      });
+      await saveBundle('sync'); render();
+    }catch(e){ render(); }
+  }
+
+  // ---------- admin access (P4): revealed ONLY when is_admin() is true. Authority is 100% backend-side —
+  // the admin RPCs return 'forbidden' to everyone else, so this is a reveal, not a gate.
+  let adminEnabled = false;
+  function openAdmin(){ try{ if(globalThis.AyyamAdmin) globalThis.AyyamAdmin.open(); }catch(e){} }
+  function hashAdminMaybe(){
+    if(adminEnabled && location.hash === '#admin' && globalThis.AyyamAdmin && !globalThis.AyyamAdmin.isOpen()) openAdmin();
+  }
+  function enableAdmin(){
+    if(adminEnabled) return; adminEnabled = true;
+    try{ if(globalThis.AyyamAdmin) globalThis.AyyamAdmin.init({ call: (fn,args)=> rpc(fn,args) }); }catch(e){}
+    const sec = $('adminSection'); if(sec) sec.classList.remove('hidden');   // reveal the admin-only section
+    const slot = $('adminEntry');
+    if(slot){ slot.innerHTML =
+        '<p class="report-hint" style="margin-top:0;">لديك صلاحية إدارية. افتح لوحة الإدارة لعرض إحصاءات المنتج العامة وقائمة المستخدمين.</p>'
+      + '<button class="btn primary admin-open" id="openAdmin" style="margin-top:12px;">فتح لوحة الإدارة</button>';
+      const b=$('openAdmin'); if(b) b.addEventListener('click', openAdmin); }
+    window.addEventListener('hashchange', hashAdminMaybe);
+    hashAdminMaybe();
+  }
+  async function checkAdmin(){
+    try{
+      if(!(sb && accountMode)) return;
+      const { data, error } = await withTimeout(sb.rpc('is_admin'), SYNC_TIMEOUT_MS);
+      if(!error && data === true) enableAdmin();
+    }catch(e){}
+  }
+
+  // ---------- optional LOCAL app PIN (item 5): quick unlock on a trusted device. NOT a server credential. ----------
+  const PIN = () => globalThis.AyyamPinLock;
+  let pinEntry = '', pinMode = 'unlock', pinOnDone = null, pinFirst = '';
+  function pinDotsHtml(n){ let s=''; for(let i=0;i<4;i++) s += '<span class="pin-dot'+(i<n?' on':'')+'"></span>'; return s; }
+  function renderPin(title, sub, msg){
+    const v=$('pinView'); if(!v) return;
+    v.classList.remove('hidden'); document.body.classList.add('pin-open');
+    const keys = ['١','٢','٣','٤','٥','٦','٧','٨','٩','','٠','⌫'];
+    const digit = { '١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9','٠':'0' };
+    v.innerHTML = '<div class="pin-card">'
+      + '<div class="auth-brand">أيام</div>'
+      + '<h2 class="pin-title">'+escapeHtml(title)+'</h2>'
+      + '<p class="pin-sub">'+escapeHtml(sub||'')+'</p>'
+      + '<div class="pin-dots">'+pinDotsHtml(pinEntry.length)+'</div>'
+      + '<div class="pin-msg" id="pinMsg">'+escapeHtml(msg||'')+'</div>'
+      + '<div class="pin-pad">'+keys.map(k=> k===''?'<span class="pin-key-blank"></span>':'<button class="pin-key" data-k="'+(digit[k]||k)+'">'+k+'</button>').join('')+'</div>'
+      + (pinMode==='setup' ? '<button class="btn ghost pin-cancel" id="pinCancel">إلغاء</button>' : '')
+      + '</div>';
+    v.querySelectorAll('.pin-key').forEach(b=> b.addEventListener('click', ()=> pinPress(b.getAttribute('data-k'))));
+    const c=$('pinCancel'); if(c) c.addEventListener('click', ()=>{ closePin(); if(pinOnDone){ const d=pinOnDone; pinOnDone=null; d({cancelled:true}); } });
+  }
+  function pinMsg(t){ const m=$('pinMsg'); if(m) m.textContent=t||''; }
+  function pinUpdateDots(){ const v=$('pinView'); const d=v&&v.querySelector('.pin-dots'); if(d) d.innerHTML=pinDotsHtml(pinEntry.length); }
+  async function pinPress(k){
+    if(k==='⌫'){ pinEntry=pinEntry.slice(0,-1); pinUpdateDots(); return; }
+    if(pinEntry.length>=4) return;
+    pinEntry += k; pinUpdateDots();
+    if(pinEntry.length===4) await pinComplete();
+  }
+  async function pinComplete(){
+    const entered = pinEntry; pinEntry='';
+    if(pinMode==='setup'){
+      if(!pinFirst){ pinFirst=entered; renderPin('أكّد الرمز','أعد إدخال الرمز نفسه'); return; }
+      if(entered!==pinFirst){ pinFirst=''; renderPin('تعيين رمز PIN','اختر رمزًا من ٤ أرقام', 'الرمزان غير متطابقين. حاول مجددًا.'); return; }
+      const r = await PIN().setPin(entered);
+      if(!r || !r.ok){ pinMsg('تعذّر حفظ الرمز على هذا الجهاز.'); return; }
+      closePin(); if(pinOnDone){ const d=pinOnDone; pinOnDone=null; d({ok:true}); }
+    } else {
+      const r = await PIN().verify(entered);
+      if(r && r.ok){ closePin(); if(pinOnDone){ const d=pinOnDone; pinOnDone=null; d({ok:true}); } return; }
+      pinUpdateDots();
+      if(r && r.reason==='locked') pinMsg('محاولات كثيرة. انتظر '+toArabicNum(Math.ceil((r.waitMs||0)/1000))+' ثانية.');
+      else pinMsg('رمز غير صحيح.' + (r && r.waitMs ? ' انتظر '+toArabicNum(Math.ceil(r.waitMs/1000))+' ثانية.' : ''));
+    }
+  }
+  function closePin(){ const v=$('pinView'); if(v){ v.classList.add('hidden'); v.innerHTML=''; } document.body.classList.remove('pin-open'); pinEntry=''; pinFirst=''; }
+  function openPinLock(onDone){ if(!(PIN() && PIN().isEnabled())){ if(onDone) onDone({ok:true}); return; } pinMode='unlock'; pinEntry=''; pinOnDone=onDone||null; renderPin('أدخل رمز PIN','لفتح أيام'); }
+  function openPinSetup(onDone){ if(!(PIN() && PIN().supported())){ alert('رمز PIN غير مدعوم على هذا الجهاز.'); if(onDone) onDone({ok:false}); return; } pinMode='setup'; pinEntry=''; pinFirst=''; pinOnDone=onDone||null; renderPin('تعيين رمز PIN','اختر رمزًا من ٤ أرقام'); }
+  // Settings toggle: enable → set a PIN; disable → require the current PIN first.
+  function setupPinToggle(){
+    const t=$('pinToggle'); if(!t || !PIN()) return;
+    t.checked = PIN().isEnabled();
+    t.addEventListener('change', ()=>{
+      if(t.checked){
+        openPinSetup((r)=>{ if(!(r && r.ok)) t.checked=false; });
+      } else {
+        openPinLock((r)=>{ if(r && r.ok){ PIN().clearPin(); t.checked=false; } else { t.checked=true; } });
+      }
+    });
+  }
+
   const MAX_ATTEMPTS = 6;
   const backoff = a => Math.min(1000 * Math.pow(2, a), 15000) + Math.floor(Math.random()*400);
   const sleep = ms => new Promise(r=>setTimeout(r, ms));
@@ -434,19 +838,19 @@
     if(syncing){ syncQueued = true; return; }
     syncing = true;
     const seqAtStart = changeSeq;
-    const key = getDeviceKey();
+    const backend = resolveSyncBackend();   // account (v2) OR legacy (device key) — legacy path unchanged
     const hadPending = isPending();
     if(hadPending){ syncState = 'syncing'; updateSyncBadge(); }
     try{
       if(!M) throw new Error('model unavailable');
-      if(!key){ if(hadPending){ needsKey = true; syncState = 'need-key'; } return; }
+      if(!backend){ if(hadPending){ needsKey = true; syncState = 'need-key'; } return; } // legacy: no device key yet
       const op = store ? await store.pendingOp() : null;
       const opId = op ? op.op_id : newId();
       const commitReason = (op && op.reason) || reason || 'sync'; // reason from the durable outbox (survives races)
 
       for(let attempt=0; attempt<MAX_ATTEMPTS; attempt++){
-        const pull = await rpc('ayyam_pull', { p_key: key });
-        if(pull.status === 'unauthorized'){ needsKey = true; syncState = 'need-key'; setDeviceKey(''); return; }
+        const pull = await backend.pull();
+        if(pull.status === 'unauthorized'){ handleAuthReject(); return; }
         needsKey = false;
         const serverEn = pull.exists ? M.toEnriched(pull.data, 1) : M.empty(0);
         const serverRev = pull.exists ? pull.revision : 0;
@@ -464,8 +868,8 @@
           clearSyncRetry();
           return;
         }
-        const commit = await rpc('ayyam_commit', { p_key:key, p_expected_revision: serverRev, p_data: merged, p_op_id: opId, p_reason: commitReason });
-        if(commit.status === 'unauthorized'){ needsKey = true; syncState='need-key'; setDeviceKey(''); return; }
+        const commit = await backend.commit(serverRev, merged, opId, commitReason);
+        if(commit.status === 'unauthorized'){ handleAuthReject(); return; }
         if(commit.status === 'conflict'){ await sleep(backoff(attempt)); continue; } // someone wrote first → re-pull/re-merge
         if(commit.status === 'invalid' || commit.status === 'too_large'){ syncState='error'; if(store) store.logDiag({type:'commit-rejected', status:commit.status}); return; }
         // ok or duplicate (duplicate = our earlier write already applied; safe)
@@ -498,7 +902,8 @@
   async function saveBundle(reason){
     changeSeq++;
     const now = Date.now();
-    if(reason === 'reset' || reason === 'import' || reason === 'routines-migrate') enriched = M.bumpEpoch(enriched, currentBundle(), now, DEVICE_ID);
+    if(reason === 'reset' || reason === 'import') enriched = M.bumpEpoch(enriched, currentBundle(), now, DEVICE_ID);
+    else if(reason === 'routines-migrate') enriched = M.migrateGeneration(enriched, currentBundle()); // baseline-stamped → multi-device safe (never clobbers real edits)
     else enriched = M.enrich(enriched, currentBundle(), now, DEVICE_ID);
     setPending(true);
     syncState = 'syncing';
@@ -520,19 +925,24 @@
   }
 
   // ---------- R2: one-time recurrence activation (migration) ----------
-  // Runs once on load over real data: recovery snapshot → AyyamRoutines.migrate() → persist as a new
-  // epoch generation (compatibility fence so a pre-R2 device can't destructively re-write the new state).
-  // Idempotent, fail-safe (on any error the old state is kept and the app stays on the legacy path), and
-  // self-healing (a stray "migrated but routines missing" state is rebuilt from the retained template).
+  // Runs once on load over real data: recovery snapshot → AyyamRoutines.migrate() → persist as a new,
+  // BASELINE-stamped epoch generation (migrateGeneration: fences a pre-routines device, yet converges
+  // byte-identically with another device's independent migration and never outweighs a real edit).
+  // Idempotent (the migv/migrationDate guard) and fail-safe (on any error the old state is kept and the
+  // app stays on the legacy path). It never re-derives routines from the template once migrated.
   let routinesActivated = false;
   function hasTemplateTasks(tpl){ return isObj(tpl) && DAY_CODES.some(c=> Array.isArray(tpl[c]) && tpl[c].length); }
   async function activateRoutinesIfNeeded(){
     if(routinesActivated) return;
     if(typeof AyyamRoutines==='undefined' || typeof AyyamTime==='undefined' || !M) return; // engine missing → legacy
     const b = currentBundle();
-    const migrated = !!b.migrationDate && b.routines && Object.keys(b.routines).length>0;
-    const corrupt  = !!b.migrationDate && (!b.routines || Object.keys(b.routines).length===0) && hasTemplateTasks(b.template);
-    if(migrated && !corrupt){ routinesActivated = true; return; } // already migrated → no-op (idempotent)
+    // Migration is PERMANENT and ONE-TIME. Once migrated (migrationVersion stamped, OR a migrationDate exists),
+    // NEVER re-derive routines from the retained legacy template — that would re-inject old/default routines over
+    // the user's current set (the reported corruption). An EMPTY routines set is a valid user state (they deleted
+    // them), NOT a signal to rebuild from the template. This replaces the old "corrupt → self-heal from template"
+    // branch, which wrongly fired whenever a user emptied their routines.
+    const migrated = (b.migrationVersion >= 1) || !!b.migrationDate;
+    if(migrated){ routinesActivated = true; return; } // already migrated → no-op (idempotent, never re-inject)
     // Nothing to migrate on a truly empty device (before first-load seeds/pulls); the seed/pull path re-invokes this.
     if(enrichedIsEmpty() && !hasTemplateTasks(b.template) && !(b.logs && Object.keys(b.logs).length)) return;
     try{
@@ -551,6 +961,21 @@
       if(store) store.logDiag({ type:'routines-migrate-fail', message: String(e && e.message || e) });
       // fail-safe: keep old state untouched; migrationDate stays '' → tasksForDate uses the legacy path.
     }
+  }
+
+  // Force the recurrence engine ON even for an empty account. A new account is no longer auto-seeded (P5),
+  // so activateRoutinesIfNeeded() no-ops on an empty bundle and migrationDate stays '' → tasksForDate would
+  // use the legacy template path and never show routines. Call this before the FIRST add on such an account.
+  async function ensureRoutinesActive(){
+    if(migrationDate) return true;
+    if(typeof AyyamRoutines==='undefined' || typeof AyyamTime==='undefined' || !M) return false;
+    try{
+      const b = currentBundle(); const tz = dayTz(); const today = AyyamTime.todayKey(tz);
+      const out = AyyamRoutines.migrate(b, today, tz);
+      if(!out.migrationDate) return false;
+      setState(sanitizeBundle(out)); routinesActivated = true;
+      return true;
+    }catch(e){ return false; }
   }
 
   // Reconnecting/refocusing/resuming always syncs — to PUSH our changes and PULL other devices'.
@@ -581,6 +1006,7 @@
   // R2 will run AyyamRoutines.migrate() on load and route tasksForDate through the routines engine.
   let routines = {};
   let migrationDate = '';
+  let migrationVersion = 0; // one-time-migration signal; persisted so migration never re-runs/re-injects
 
   // The template in effect on a given date. Editing the template only changes today and later;
   // past days keep the version that was active back then (see beginTemplateEdit).
@@ -616,7 +1042,7 @@
     );
     document.documentElement.style.setProperty('--bg-blur', prefs.bgBlur+'px');
 
-    Array.from(document.querySelectorAll('#themeToggle button')).forEach(b=>{
+    Array.from(document.querySelectorAll('#themeToggle button, #themeToggleSettings button')).forEach(b=>{
       b.classList.toggle('active', b.dataset.theme===prefs.theme);
     });
     const bgToggle = document.getElementById('bgToggle');
@@ -763,10 +1189,28 @@
       el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'), 2000);
     }catch(e){}
   }
+  // A recovery / email-verification deep link (Android). Establishes the session from the link, then opens the
+  // reset screen (recovery) or reloads into the account (verification). Never shows a black/broken web page.
+  async function handleAuthDeepLink(rawUrl, host){
+    if(!(sb && AC())) return;
+    try{ hideStartupState(); if(loadingEl) loadingEl.classList.add('hidden'); }catch(e){}
+    let res = null; try{ res = await AC().setSessionFromUrl(sb, rawUrl); }catch(e){}
+    if(!res || !res.ok){
+      try{ openAuth('signin', { dismissible:false }); if(globalThis.AyyamAuthUI) globalThis.AyyamAuthUI.message('انتهت صلاحية الرابط أو أنه غير صالح. اطلب رابطًا جديدًا.', 'error'); }catch(e){}
+      return;
+    }
+    if(host === 'reset' || (res.type && String(res.type).indexOf('recovery')===0)){
+      try{ openAuth('reset', { dismissible:false }); }catch(e){}
+    } else {
+      // email verified / signed in → boot into the account (onAuthChanged also fires; reload is idempotent)
+      try{ location.reload(); }catch(e){}
+    }
+  }
   function handleDeepLink(url){
     try{
       if(typeof url!=='string' || url.indexOf('ayyam://')!==0) return; // validate scheme
       const u = new URL(url);
+      if(u.hostname === 'reset' || u.hostname === 'auth'){ handleAuthDeepLink(url, u.hostname); return; } // password reset / email verify
       if(u.hostname !== 'today') return;                                // only the Today host
       selectedDate = parseKey(todayKey());
       if($('settingsView') && !$('settingsView').classList.contains('hidden')) closeSettings();
@@ -781,6 +1225,15 @@
   // Android hardware/system Back: close the top-most thing; exit only when nothing is left to close.
   function handleBack(){
     try{
+      // PIN gate: on unlock it consumes Back (can't be bypassed); on setup, Back cancels.
+      if($('pinView') && !$('pinView').classList.contains('hidden')){
+        if(pinMode==='setup'){ closePin(); if(pinOnDone){ const d=pinOnDone; pinOnDone=null; d({cancelled:true}); } }
+        return;
+      }
+      // Top-most full-screen flows first (onboarding z-250 > auth z-240 > admin z-230) — never exit mid-flow.
+      if(globalThis.AyyamOnboarding && globalThis.AyyamOnboarding.isOpen()){ globalThis.AyyamOnboarding.back(); return; } // onboarding: prev/exit
+      if(globalThis.AyyamAuthUI && globalThis.AyyamAuthUI.isOpen()){ globalThis.AyyamAuthUI.handleBack(); return; }        // auth: sub-screen→back / gate consumes
+      if(globalThis.AyyamAdmin && globalThis.AyyamAdmin.isOpen()){ globalThis.AyyamAdmin.close(); return; }               // admin dashboard
       const upd = $('updateOverlay');
       if(upd && upd.classList.contains('show')){ closeUpdateSheet(); return; }      // 0. update sheet
       const exc = $('excuseOverlay');
@@ -794,17 +1247,21 @@
       if($('settingsView') && !$('settingsView').classList.contains('hidden')){ closeSettings(); return; } // 3. settings
       if($('reportsView') && !$('reportsView').classList.contains('hidden')){ closeReports(); return; }     // 4. reports
       if($('calendarView') && !$('calendarView').classList.contains('hidden')){ closeCalendar(); return; }  // 5. calendar
+      if($('routineView') && !$('routineView').classList.contains('hidden')){ closeRoutine(); return; }     // 6. routine
       AyyamNative.exitApp();                                                        // 6. nothing → exit
     }catch(e){ try{ AyyamNative.exitApp(); }catch(_){} }
   }
   // Native Android reminders: user-initiated (🔔). Request POST_NOTIFICATIONS (13+) then schedule the
   // plan. Purely local — no server, no token. No-op on web.
+  // Mark the bell as "reminders on" cleanly — keep the SVG icon, just flag the state (CSS colours it + adds a
+  // small dot). Never replace the icon with emoji text (that looked like a stray checkmark under the bell).
+  function markNotifEnabled(){ const b=$('notifyBtn'); if(b){ b.classList.add('notif-on'); b.setAttribute('aria-label','التذكيرات مفعّلة'); } }
   async function enableLocalNotifs(){
     try{
       const r = await AyyamNative.requestNotifPermission();
       if(!r || r.permission!=='granted'){ alert('لتصلك تذكيرات مهامك مع كل صلاة، فعّل إذن الإشعارات من إعدادات التطبيق ثم اضغط 🔔 مرة أخرى.'); return; }
       pushNotifPlanNow(); // schedule now that notifications can be shown
-      const b=$('notifyBtn'); if(b){ b.textContent='🔔✓'; b.setAttribute('aria-label','التذكيرات مفعّلة'); }
+      markNotifEnabled();
       if(store) store.logDiag({ type:'local-notifs-enabled' });
     }catch(e){ alert('تعذّر تفعيل التذكيرات. حاول لاحقًا.'); }
   }
@@ -962,7 +1419,14 @@
     groupsEl.innerHTML = '';
 
     if(tasks.length===0){
-      groupsEl.innerHTML = '<p class="empty">لا مهام في هذا اليوم بعد. اضغط + لإضافة أول مهمة.</p>';
+      groupsEl.innerHTML =
+        '<div class="empty-state" id="emptyToday">'
+        + '<div class="empty-emoji">🌱</div>'
+        + '<h3 class="empty-title">يومك يبدأ من هنا</h3>'
+        + '<p class="empty-sub">أضف أول مهمة تريد المحافظة عليها.</p>'
+        + '<button class="btn primary" id="emptyAddTask" style="max-width:220px;">إضافة أول مهمة</button>'
+        + '</div>';
+      const b = $('emptyAddTask'); if(b) b.addEventListener('click', ()=> openAddSheet());
       return;
     }
 
@@ -1409,6 +1873,7 @@
 
     if(!editingTask){
       // ADD from the day view
+      await ensureRoutinesActive(); // empty account: ensure the recurrence engine is on before the first add
       if(pendingRec.freq==='once'){
         const log = ensureLog(selKey);
         log.extra.push({ id:nid(), title, time:'', timeValue, period }); // one-off on this date
@@ -1418,7 +1883,7 @@
         const id = nid();
         routines[id] = { id, seriesId:id, title, time:'', timeValue, period, order:Object.keys(routines).length, rec };
       }
-      await saveBundle('sync'); closeAddSheet(); render(); return;
+      await saveBundle('sync'); closeAddSheet(); render(); track('task_created'); return;
     }
 
     // EDIT an existing occurrence
@@ -1477,16 +1942,37 @@
   }
 
   // ---------- settings / template editor ----------
-  function openSettings(){
-    $('mainView').classList.add('hidden');
-    $('settingsView').classList.remove('hidden');
-    $('fabAdd').classList.add('hidden');
-    renderTplDays();
-    renderTplTasks();
-    applyPrefs();
-    updateSyncKeyInfo();
-    updateDiagInfo();
+  // ---------- unified screen switching + bottom navigation (5 base screens) ----------
+  // Same manual SPA mechanism as before (toggle `hidden` on the view containers) — just centralised so the
+  // bottom nav can jump directly between any two screens without round-tripping through Today. No reload,
+  // no app-shell rebuild: state/session/sync are untouched; only which view is visible changes.
+  const BASE_SCREENS = { today:'mainView', calendar:'calendarView', routine:'routineView', progress:'reportsView', settings:'settingsView' };
+  let currentScreen = 'today';
+  function renderScreen(name){
+    if(name==='today') render();
+    else if(name==='calendar'){ const tk=todayKey(); calYear=Number(tk.slice(0,4)); calMonth=Number(tk.slice(5,7)); renderCalWeekdays(); renderCalLegend(); renderCalendar(); track('calendar_opened'); }
+    else if(name==='routine'){ renderTplDays(); renderTplTasks(); }
+    else if(name==='progress'){ renderReports(); track('insights_opened'); }
+    else if(name==='settings'){ applyPrefs(); updateSyncKeyInfo(); updateDiagInfo(); }
   }
+  function showScreen(name){
+    if(!BASE_SCREENS[name]) name='today';
+    currentScreen = name;
+    Object.keys(BASE_SCREENS).forEach(k=>{ const el=$(BASE_SCREENS[k]); if(el) el.classList.toggle('hidden', k!==name); });
+    $('fabAdd').classList.toggle('hidden', name!=='today');   // the FAB belongs to Today only
+    try{ renderScreen(name); }catch(e){}
+    setActiveNav(name);
+    try{ window.scrollTo(0, 0); }catch(e){}
+  }
+  function setActiveNav(name){
+    const items = document.querySelectorAll('#bottomNav .bnav-item');
+    items.forEach(b=>{ const on = b.getAttribute('data-screen')===name;
+      b.classList.toggle('active', on);
+      if(on) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
+  }
+
+  function openSettings(){ showScreen('settings'); }
+  function openRoutine(){ showScreen('routine'); }
   function updateSyncKeyInfo(){
     const el = $('syncKeyInfo'); if(!el) return;
     el.textContent = getDeviceKey()
@@ -1506,7 +1992,7 @@
     }catch(e){ return '—'; }
   }
   function syncStateLabel(){
-    const m = { idle:'خامل', syncing:'يتزامن الآن', saved:'تمّت المزامنة', error:'خطأ مؤقت', offline:'غير متصل', 'need-key':'يحتاج مفتاح المزامنة' };
+    const m = { idle:'خامل', syncing:'يتزامن الآن', saved:'تمّت المزامنة', error:'خطأ مؤقت', offline:'غير متصل', 'need-key':'يحتاج تسجيل الدخول', 'need-auth':'يحتاج تسجيل الدخول' };
     return m[syncState] || syncState;
   }
   function relTime(ts){
@@ -1571,8 +2057,8 @@
       'تغييرات غير مرفوعة: ' + toArabicNum(outbox),
       'عناصر الاسترجاع: ' + toArabicNum(recovery),
       'الإشعارات: ' + (pushActive ? 'مفعّلة' : 'غير مفعّلة'),
-      'مفتاح المزامنة: ' + (getDeviceKey() ? 'مُدخل' : 'غير مُدخل'),
-      ...(keyDiag.rawLen ? ['تشخيص إدخال المفتاح: طول=' + toArabicNum(keyDiag.cleanLen) + (keyDiag.changed ? ' (أُزيلت أحرف خفية من ' + toArabicNum(keyDiag.rawLen) + ')' : '') + ' · الجلب: ' + keyDiag.pull] : []),
+      'الحساب: ' + (accountMode ? 'مسجّل الدخول' : 'غير مسجّل'),
+      ...(keyDiag.pull ? ['تشخيص الجلب: ' + keyDiag.pull] : []),
       'التخزين المحلي: ' + (storageDegraded ? 'محدود (بدون قاعدة بيانات)' : (store && store.newerSchema ? 'إصدار أحدث — يُنصح بتحديث التطبيق' : 'سليم')),
       'الوضع المحلي فقط: ' + (localOnly ? 'نعم' : 'لا'),
       'معرّف الجهاز: ' + (DEVICE_ID ? DEVICE_ID.slice(0,8) : '—'),
@@ -1590,12 +2076,8 @@
       const b=$('copyDiag'); if(b){ const o=b.textContent; b.textContent='تم النسخ ✓'; setTimeout(()=>{ b.textContent=o; }, 1500); }
     }catch(e){ alert('تعذّر النسخ'); }
   }
-  function closeSettings(){
-    $('settingsView').classList.add('hidden');
-    $('mainView').classList.remove('hidden');
-    $('fabAdd').classList.remove('hidden');
-    render();
-  }
+  function closeSettings(){ showScreen('today'); }
+  function closeRoutine(){ showScreen('today'); }
 
   // ---------- performance insights (I1) — pure render over AyyamAnalytics; NO analytics logic here ----------
   const INS_RANGE = { days: 30 };
@@ -1699,17 +2181,8 @@
     return '';
   }
 
-  function openReports(){
-    $('mainView').classList.add('hidden');
-    $('reportsView').classList.remove('hidden');
-    $('fabAdd').classList.add('hidden');
-    renderReports();
-  }
-  function closeReports(){
-    $('reportsView').classList.add('hidden');
-    $('mainView').classList.remove('hidden');
-    $('fabAdd').classList.remove('hidden');
-  }
+  function openReports(){ showScreen('progress'); }
+  function closeReports(){ showScreen('today'); }
 
   // ---------- calendar month view (C1) — pure render over AyyamAnalytics; NO analytics logic here ----------
   const MONTH_NAMES = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
@@ -1717,18 +2190,8 @@
   let calYear = 2026, calMonth = 1, dayOverviewKey = null;
   const AN = ()=> window.AyyamAnalytics;
 
-  function openCalendar(){
-    const tk = todayKey(); calYear = Number(tk.slice(0,4)); calMonth = Number(tk.slice(5,7));
-    $('mainView').classList.add('hidden');
-    $('calendarView').classList.remove('hidden');
-    $('fabAdd').classList.add('hidden');
-    renderCalWeekdays(); renderCalLegend(); renderCalendar();
-  }
-  function closeCalendar(){
-    $('calendarView').classList.add('hidden');
-    $('mainView').classList.remove('hidden');
-    $('fabAdd').classList.remove('hidden');
-  }
+  function openCalendar(){ showScreen('calendar'); }
+  function closeCalendar(){ showScreen('today'); }
   function calShift(delta){
     let m = calMonth + delta, y = calYear;
     while(m < 1){ m += 12; y--; } while(m > 12){ m -= 12; y++; }
@@ -1922,7 +2385,7 @@
   }
 
   // ---------- wiring ----------
-  $('syncBadge').addEventListener('click', ()=>{ if(syncState==='need-key') promptForKey(); });
+  $('syncBadge').addEventListener('click', ()=>{ if(syncState==='need-key' || syncState==='need-auth') openAuth('signin', { dismissible:true }); });
   $('prevDay').addEventListener('click', ()=>{ selectedDate = new Date(selectedDate); selectedDate.setDate(selectedDate.getDate()-1); render(); });
   $('nextDay').addEventListener('click', ()=>{ selectedDate = new Date(selectedDate); selectedDate.setDate(selectedDate.getDate()+1); render(); });
 
@@ -1946,19 +2409,22 @@
 
   $('clearDayBtn').addEventListener('click', clearWholeDay);
   $('restoreDayBtn').addEventListener('click', restoreDayToTemplate);
-  $('enterKeyBtn').addEventListener('click', ()=>{ promptForKey(); updateSyncKeyInfo(); });
 
-  $('openSettings').addEventListener('click', openSettings);
   $('closeSettings').addEventListener('click', closeSettings);
   $('tplAddTask').addEventListener('click', ()=> openAddSheet({ mode:'template', day: settingsDay }));
 
-  // reports
-  $('openReports').addEventListener('click', openReports);
-  $('closeReports').addEventListener('click', closeReports);
+  // routine (weekly template) screen
+  { const cr=$('closeRoutine'); if(cr) cr.addEventListener('click', closeRoutine); }
 
-  // calendar
-  $('openCalendar').addEventListener('click', openCalendar);
+  // reports / calendar / routine back buttons (header nav icons removed — the bottom nav is the only top-level nav)
+  $('closeReports').addEventListener('click', closeReports);
   $('closeCalendar').addEventListener('click', closeCalendar);
+
+  // bottom navigation: switch among the 5 base screens (no reload; state/session/sync preserved)
+  document.querySelectorAll('#bottomNav .bnav-item').forEach(b=>{
+    b.addEventListener('click', ()=>{ try{ showScreen(b.getAttribute('data-screen')); }catch(e){} });
+  });
+  setActiveNav('today');
   $('calPrev').addEventListener('click', ()=> calShift(-1));
   $('calNext').addEventListener('click', ()=> calShift(1));
   $('calToday').addEventListener('click', ()=>{ const tk=todayKey(); calYear=Number(tk.slice(0,4)); calMonth=Number(tk.slice(5,7)); renderCalendar(); });
@@ -1966,7 +2432,6 @@
   $('dayNext').addEventListener('click', ()=>{ if(dayOverviewKey) openDayOverview(AyyamTime.addDays(dayOverviewKey,1)); });
   $('dayClose').addEventListener('click', closeDayOverview);
   $('dayOverlay').addEventListener('click', (e)=>{ if(e.target.id==='dayOverlay') closeDayOverview(); });
-  { const cd = $('copyDiag'); if(cd) cd.addEventListener('click', copyDiag); }
 
   // theme toggle (main header)
   $('themeToggle').addEventListener('click', (e)=>{
@@ -1977,22 +2442,13 @@
     applyPrefs();
   });
 
-  // appearance controls (in settings)
-  $('bgToggle').addEventListener('change', (e)=>{
-    prefs.bgOn = e.target.checked;
-    savePrefs(prefs);
-    applyPrefs();
-  });
-  $('bgOpacity').addEventListener('input', (e)=>{
-    prefs.bgOpacity = parseInt(e.target.value,10);
-    savePrefs(prefs);
-    applyPrefs();
-  });
-  $('bgBlur').addEventListener('input', (e)=>{
-    prefs.bgBlur = parseInt(e.target.value,10);
-    savePrefs(prefs);
-    applyPrefs();
-  });
+  // appearance: theme selector in Settings. Background customization (bgOn/bgOpacity/bgBlur) was retired
+  // from the UI; those prefs stay in the model (sanitizeBundle/applyPrefs) for backward-compatibility and are
+  // applied with their stored/default values, so existing users' data never breaks.
+  { const tt = $('themeToggleSettings'); if(tt) tt.addEventListener('click', (e)=>{
+      const btn = e.target.closest('button[data-theme]'); if(!btn) return;
+      prefs.theme = btn.dataset.theme; savePrefs(prefs); applyPrefs();
+    }); }
 
   // ---------- prayer-times location ----------
   // Reminders are computed on the server from the last saved location, so keep it current:
@@ -2069,64 +2525,16 @@
   $('useMyLocation').addEventListener('click', ()=> refreshLocation(true));
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') autoRefreshLocation(); });
 
-  // data management
-  $('exportData').addEventListener('click', ()=>{
-    const backup = {...currentBundle(), exportedAt: new Date().toISOString()};
-    const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'ayyam-backup-' + dateKey(new Date()) + '.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(()=> URL.revokeObjectURL(url), 1000); // revoking synchronously can cancel the download on some browsers
-  });
-
-  // Restore a backup file produced by "export". The file is validated like server data;
-  // the restored state then syncs to the server like any other edit.
-  $('importData').addEventListener('click', ()=> $('importFile').click());
-  $('importFile').addEventListener('change', async (e)=>{
-    const file = e.target.files && e.target.files[0];
-    e.target.value = ''; // allow choosing the same file again later
-    if(!file) return;
-    let raw;
-    try{ raw = JSON.parse(await file.text()); }catch(err){ raw = null; }
-    if(!isObj(raw) || !isObj(raw.template) || !isObj(raw.logs)){
-      alert('هذا الملف ليس نسخة احتياطية صالحة من تطبيق أيام.');
-      return;
-    }
-    const restored = sanitizeBundle(raw);
-    const days = Object.keys(restored.logs).length;
-    const when = typeof raw.exportedAt==='string' ? new Date(raw.exportedAt) : null;
-    const whenTxt = when && !isNaN(when) ? ' (بتاريخ ' + when.toLocaleDateString('ar-EG') + ')' : '';
-    if(!confirm(`استرجاع النسخة الاحتياطية${whenTxt}؟\nتحتوي على سجل ${toArabicNum(days)} يوم.\nسيتم استبدال بياناتك الحالية بالكامل.`)) return;
-    setState(restored);
-    saveBundle('import'); // new generation: fences older devices from re-adding replaced data
-    applyPrefs();
-    renderTplDays();
-    renderTplTasks();
-    alert('تم استرجاع النسخة الاحتياطية.');
-  });
-  $('resetData').addEventListener('click', ()=>{
-    const ok = confirm('سيتم حذف كل المهام والسجلات والعودة للقالب الافتراضي. هل أنت متأكد؟');
-    if(!ok) return;
-    template = defaultTemplate();
-    logs = {};
-    tplArchive = { since: EPOCH_KEY, versions: [] };
-    routines = {};
-    migrationDate = '';
-    saveBundle('reset'); // new generation: a stale offline device can't bring the old data back
-    renderTplDays();
-    renderTplTasks();
-    closeSettings();
-  });
+  // Data management (export / import backup / reset-all) was retired from the public Settings UI (item 4):
+  // end users don't need these controls, and "reset all" must not sit one tap away. The sync engine,
+  // IndexedDB, outbox, snapshots, restore + migration internals are UNCHANGED — only the UI entry points are
+  // gone. currentBundle/sanitizeBundle/setState/saveBundle still exist for the sync/migration paths.
 
   // ---------- Android direct-APK updater (native only) ----------
   // Shows the SAME compact "#updateBanner" pill the web SW-update flow uses. On Android the pill opens an
   // update sheet (notes + progress); the actual download/verify/install is done by the native UpdaterBridge
   // (SHA-256 verified, same-signature enforced by the OS, user confirms on the system installer screen).
-  let pendingUpdate = null, updateProgressWired = false;
+  let pendingUpdate = null, updateAction = null, updateProgressWired = false;
   function showUpdatePill(onClick){
     const banner = $('updateBanner'); if(!banner) return;
     banner.classList.remove('hidden');
@@ -2142,9 +2550,12 @@
     const m = pendingUpdate; if(!m) return;
     const ov=$('updateOverlay'); if(!ov) return;
     const v=$('updateSheetVersion'); if(v) v.textContent = m.versionName ? ('الإصدار '+m.versionName) : 'إصدار جديد';
-    const n=$('updateSheetNotes'); if(n) n.textContent = m.notes || 'تحسينات وإصلاحات.';
+    const n=$('updateSheetNotes'); if(n){
+      const list = (m.notes && m.notes.length) ? m.notes : ['تحسينات وإصلاحات.'];
+      n.innerHTML = list.map(x=>'• '+escapeHtml(x)).join('<br>');
+    }
     hideUpdateProgress();
-    const btn=$('updateInstall'); if(btn) btn.disabled=false;
+    const btn=$('updateInstall'); if(btn){ btn.disabled=false; btn.textContent='تحديث الآن'; btn.onclick = ()=>{ if(typeof updateAction==='function') updateAction(); }; }
     ov.classList.add('show');
   }
   function closeUpdateSheet(){ const ov=$('updateOverlay'); if(ov) ov.classList.remove('show'); }
@@ -2181,19 +2592,70 @@
     if(!(NATIVE && AyyamNative.updaterConfigured && AyyamNative.updaterConfigured())) return;
     if(!navigator.onLine) return;
     let last=0; try{ last=parseInt(localStorage.getItem(LS_UPDATE_CHECK)||'0',10)||0; }catch(e){}
-    if(!AyyamUpdate.shouldCheck(last, Date.now())) return;
+    if(!AyyamUpdate.shouldCheck(last, Date.now(), NATIVE_UPDATE_INTERVAL)) return;
     let txt=null;
     try{ const res=await fetch(UPDATE_MANIFEST_URL,{cache:'no-store'}); if(!res.ok) return; txt=await res.text(); }catch(e){ return; }
     try{ localStorage.setItem(LS_UPDATE_CHECK, String(Date.now())); }catch(e){}
     const manifest = AyyamUpdate.parseManifest(txt); if(!manifest) return;
     let installed=null; try{ const info=await AyyamNative.appInfo(); installed=info&&info.build; }catch(e){}
     if(!AyyamUpdate.isUpdateAvailable(manifest, installed)) return; // up-to-date → no badge
-    pendingUpdate = manifest;
+    pendingUpdate = manifest; updateAction = runAndroidUpdate;
     if(!updateProgressWired){ updateProgressWired=true; try{ AyyamNative.updater.onProgress((ev)=> showUpdateProgress((ev&&ev.percent)||0)); }catch(e){} }
     showUpdatePill(openUpdateSheet);
   }
+  // MANUAL update check (the Settings button, item 1). Unlike the throttled background checkNativeUpdate(),
+  // this ALWAYS runs (no shouldCheck gate), ALWAYS gives clear feedback, shows a loading state, and guards
+  // against repeated taps while a check is in flight. Decisions come from AyyamUpdate.evaluateUpdate (pure).
+  let updateCheckInFlight = false;
+  function setUpdateCheckMsg(text, kind){
+    const el=$('updateCheckMsg'); if(!el) return;
+    el.textContent = text || '';
+    el.classList.remove('is-err','is-ok','is-info');
+    if(kind) el.classList.add('is-'+kind);
+    el.classList.toggle('hidden', !text);
+  }
+  async function manualUpdateCheck(){
+    if(updateCheckInFlight) return;                              // repeated clicks while loading → ignored
+    if(!(NATIVE && AyyamNative.updaterConfigured && AyyamNative.updaterConfigured())){
+      setUpdateCheckMsg('التحقق من التحديثات متاح على تطبيق أندرويد.', 'info'); return;
+    }
+    updateCheckInFlight = true;
+    const btn=$('checkUpdateBtn'); const orig = btn ? btn.textContent : '';
+    if(btn){ btn.disabled=true; btn.setAttribute('aria-busy','true'); btn.textContent='جارٍ التحقق…'; }
+    setUpdateCheckMsg('جارٍ التحقق من وجود تحديث…', 'info');
+    let res = { ok:false, reachable:false };
+    try{
+      if(navigator.onLine === false) throw new Error('offline'); // reachable stays false → 'network'
+      const r = await fetch(UPDATE_MANIFEST_URL, { cache:'no-store' });
+      if(!r.ok){ res = { ok:false, reachable:true, status:r.status }; }  // server reached, but no/again manifest → 'unavailable'
+      else {
+        const text = await r.text();
+        let installed=null; try{ const info=await AyyamNative.appInfo(); installed=info&&info.build; }catch(e){}
+        res = { ok:true, text, installedVersionCode: installed };
+        try{ localStorage.setItem(LS_UPDATE_CHECK, String(Date.now())); }catch(e){}
+      }
+    }catch(e){ res = { ok:false, reachable:false, error:(e&&e.message)||'error' }; } // offline / DNS / timeout
+    const verdict = AyyamUpdate.evaluateUpdate(res);
+    if(btn){ btn.disabled=false; btn.removeAttribute('aria-busy'); btn.textContent=orig||'التحقق من وجود تحديث'; }
+    updateCheckInFlight = false;
+    if(verdict.outcome==='available'){
+      setUpdateCheckMsg('', '');
+      pendingUpdate = verdict.manifest; updateAction = runAndroidUpdate;
+      if(!updateProgressWired){ updateProgressWired=true; try{ AyyamNative.updater.onProgress((ev)=> showUpdateProgress((ev&&ev.percent)||0)); }catch(e){} }
+      openUpdateSheet();                                         // version + release notes + «تحديث الآن»/«لاحقًا»
+    } else if(verdict.outcome==='latest'){
+      setUpdateCheckMsg('أنت تستخدم أحدث إصدار من أيام.', 'ok');
+    } else if(verdict.outcome==='malformed'){
+      try{ store && store.logDiag && store.logDiag({ type:'update-manifest-invalid' }); }catch(e){}   // internal diagnostic only — never a raw error to the user
+      setUpdateCheckMsg('تعذّر قراءة بيانات التحديث. حاول مرة أخرى لاحقًا.', 'err');
+    } else if(verdict.outcome==='unavailable'){
+      try{ store && store.logDiag && store.logDiag({ type:'update-manifest-unavailable', status: res.status }); }catch(e){}
+      setUpdateCheckMsg('خدمة التحديث غير متاحة حاليًا. حاول مرة أخرى لاحقًا.', 'err');  // reached the server, no manifest (≠ انقطاع اتصال)
+    } else {
+      setUpdateCheckMsg('تعذّر الوصول إلى خدمة التحديث. تحقّق من اتصالك بالإنترنت وحاول مرة أخرى.', 'err');  // genuine network failure
+    }
+  }
   function setupUpdateSheet(){
-    const inst=$('updateInstall'); if(inst) inst.addEventListener('click', runAndroidUpdate);
     const cl=$('updateClose'); if(cl) cl.addEventListener('click', closeUpdateSheet);
   }
 
@@ -2229,12 +2691,16 @@
       });
     }
     function showUpdateBanner(worker){
-      const banner = $('updateBanner'); if(!banner) return;
-      banner.classList.remove('hidden');
-      $('updateNow').onclick = ()=>{
-        $('updateNow').disabled = true;
-        worker.postMessage({ type:'SKIP_WAITING' }); // activate the waiting version → controllerchange → reload
+      // Same UX as Android: a calm pill → a sheet with the version + release notes + «تحديث الآن»/«لاحقًا».
+      // «تحديث الآن» flushes nothing to lose (local data persists across the SW activation), then
+      // SKIP_WAITING → activate → the controllerchange handler reloads ONCE onto the coherent version.
+      pendingUpdate = { versionName: APP_VERSION, notes: RELEASE_NOTES };
+      updateAction = async ()=>{
+        const btn=$('updateInstall'); if(btn) btn.disabled=true;
+        try{ if(isPending() && navigator.onLine!==false) await syncNow('pre-update'); }catch(e){}
+        try{ worker.postMessage({ type:'SKIP_WAITING' }); }catch(e){}
       };
+      showUpdatePill(openUpdateSheet);
     }
 
     // ---------- Push notifications setup ----------
@@ -2298,31 +2764,35 @@
         });
       }
       const json = sub.toJSON();
-      // Register through the device-key-protected RPC (register_push): a real upsert on the endpoint,
-      // no direct table access from the browser. Needs the sync key — the same one used for data sync.
-      const key = getDeviceKey();
-      if(!key){
-        alert('لتفعيل الإشعارات أدخل مفتاح المزامنة أولًا (من إعدادات المزامنة).');
-        promptForKey();
-        return;
-      }
+      // Account users register through the authenticated RPC (register_push_v2, identity from the session —
+      // no key). A signed-out web user is asked to create an account (the device-key concept is retired).
       let saved = false, unauthorized = false;
       if(sb){
         try{
-          const { data, error } = await withTimeout(sb.rpc('register_push', {
-            p_key: key, p_endpoint: json.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth,
-          }), SYNC_TIMEOUT_MS);
+          let data, error;
+          if(accountMode){
+            ({ data, error } = await withTimeout(sb.rpc('register_push_v2', {
+              p_endpoint: json.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth }), SYNC_TIMEOUT_MS));
+          } else {
+            const key = getDeviceKey();
+            if(!key){ openAuth('signin', { dismissible:true }); if(globalThis.AyyamAuthUI) AyyamAuthUI.message('أنشئ حسابًا أو سجّل الدخول لتفعيل الإشعارات.', 'info'); return; }
+            ({ data, error } = await withTimeout(sb.rpc('register_push', {
+              p_key: key, p_endpoint: json.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth }), SYNC_TIMEOUT_MS));
+          }
           if(!error && data && data.status === 'ok') saved = true;
           else if(data && data.status === 'unauthorized') unauthorized = true;
         }catch(e){ saved = false; }
       }
-      if(unauthorized){ alert('مفتاح المزامنة غير صحيح. أعد إدخاله ثم فعّل الإشعارات.'); setDeviceKey(''); promptForKey(); return; }
+      if(unauthorized){
+        if(accountMode){ alert('انتهت جلستك. سجّل الدخول مرة أخرى ثم فعّل الإشعارات.'); }
+        else { openAuth('signin', { dismissible:true }); }
+        return;
+      }
       if(!saved){
         alert('تعذّر تسجيل الإشعارات على الخادم. تأكد من الاتصال وحاول مرة أخرى.');
         return;
       }
-      $('notifyBtn').textContent = '🔔✓';
-      $('notifyBtn').setAttribute('aria-label','الإشعارات مفعّلة');
+      markNotifEnabled();
       autoRefreshLocation();
     }
 
@@ -2331,7 +2801,7 @@
       if(NATIVE){
         if(AyyamNative.notifConfigured && AyyamNative.notifConfigured()){
           $('notifyBtn').classList.remove('hidden');
-          try{ const st = await AyyamNative.checkNotifPermission(); if(st && st.permission==='granted'){ $('notifyBtn').textContent='🔔✓'; $('notifyBtn').setAttribute('aria-label','التذكيرات مفعّلة'); } }catch(e){}
+          try{ const st = await AyyamNative.checkNotifPermission(); if(st && st.permission==='granted'){ markNotifEnabled(); } }catch(e){}
           $('notifyBtn').addEventListener('click', enableLocalNotifs);
         }
         return;
@@ -2367,6 +2837,10 @@
   }
   setupPWA();
 
+  // Local PIN gate: if a PIN is set and this run isn't unlocked yet, lock immediately (opaque overlay covers
+  // everything while the app loads behind it). Local convenience only — never blocks data or sync.
+  try{ if(PIN() && PIN().isEnabled() && !PIN().isUnlocked()) openPinLock(); }catch(e){}
+
   // ---------- initial data load (durable local first, then merge with Supabase) ----------
   const loadingEl = document.getElementById('loadingOverlay');
   function enrichedIsEmpty(){ return !enriched || Object.keys(enriched.reg).length===0; }
@@ -2386,12 +2860,20 @@
   // the default schedule as if it were the user's real data when we simply couldn't reach the server.
   // → 'ready' (adopted real data) | 'empty' (server reachable, no data) | 'need-key' | 'unreachable'
   async function firstLoadPull(){
-    const key = getDeviceKey();
-    if(!key) return 'need-key';
+    const backend = resolveSyncBackend();
+    if(!backend) return accountMode ? 'need-auth' : 'need-key';
     if(!M || !sb) return 'unreachable';
     try{
-      const pull = await rpc('ayyam_pull', { p_key: key });
-      if(pull.status === 'unauthorized'){ keyDiag.pull='unauthorized'; setDeviceKey(''); return 'need-key'; }
+      const pull = await backend.pull();
+      if(pull.status === 'unauthorized'){ if(accountMode){ sessionExpired=true; return 'need-auth'; } keyDiag.pull='unauthorized'; setDeviceKey(''); return 'need-key'; }
+      // Account backend reachable but its schema/RPCs aren't deployed here (e.g. the app points at a backend
+      // without the P1→P8 migrations). Honest, safe message — never a generic "check your connection".
+      if(pull.status === 'error'){
+        keyDiag.pull = 'v2-'+(pull.reason||'error');   // safe: a reason code, never a token
+        if(accountMode && pull.reason === 'schema_missing') return 'backend-missing';
+        if(accountMode && pull.reason === 'unauthorized'){ sessionExpired=true; return 'need-auth'; }
+        return 'unreachable';
+      }
       keyDiag.pull = 'ready';
       if(pull.exists){
         const serverEn = M.toEnriched(pull.data, 1);
@@ -2411,55 +2893,89 @@
     const el = $('startupState'); if(!el) return;
     el.classList.remove('hidden');
     const msg=$('startupMsg'), icon=$('startupIcon');
-    const retry=$('startupRetry'), keyBtn=$('startupKey'), off=$('startupOffline');
-    [retry,keyBtn,off].forEach(b=>b.classList.add('hidden'));
-    if(kind==='need-key'){
-      icon.textContent='🔑';
-      msg.textContent='لعرض بياناتك ومزامنتها بين أجهزتك، أدخل مفتاح المزامنة على هذا الجهاز.';
-      keyBtn.classList.remove('hidden');
-      off.classList.remove('hidden');
+    const retry=$('startupRetry'), off=$('startupOffline');
+    [retry,off].forEach(b=>{ if(b) b.classList.add('hidden'); });
+    if(kind==='backend-missing'){
+      // Account schema/RPCs not deployed on this backend yet (safe, accurate — no token/secret surfaced).
+      icon.textContent='🛠️';
+      msg.textContent='خدمة الحسابات غير مهيأة على الخادم بعد. يمكنك المتابعة دون حساب الآن، والمزامنة لاحقًا.';
+      if(retry) retry.classList.remove('hidden');
+      if(off) off.classList.remove('hidden');
     } else { // load-failed
       icon.textContent='☁️';
       msg.textContent='تعذّر تحميل بياناتك من السحابة. تحقّق من الاتصال وأعد المحاولة.';
-      retry.classList.remove('hidden');
-      off.classList.remove('hidden');
+      if(retry) retry.classList.remove('hidden');
+      if(off) off.classList.remove('hidden');
     }
+  }
+  // Continue as a local-only device (baseline-stamped, so a later reconnect merges rather than overwrites).
+  async function continueOffline(){
+    hideStartupState();
+    try{ if(globalThis.AyyamAuthUI) globalThis.AyyamAuthUI.close(); }catch(e){}
+    await seedDefault(true);
+    await activateRoutinesIfNeeded();
+    if(loadingEl) loadingEl.classList.add('hidden');
+    render();
   }
   async function runFirstLoad(){
     const r = await firstLoadPull();
     if(r==='ready'){ hideStartupState(); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
-    else if(r==='empty'){ hideStartupState(); await seedDefault(false); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
-    else if(r==='need-key'){ needsKey=true; syncState='need-key'; updateSyncBadge(); showStartupState('need-key'); }
+    else if(r==='empty'){
+      hideStartupState();
+      // Account mode: a NEW account starts EMPTY — the onboarding + optional starter let the user choose what
+      // to keep. We never auto-add worship/habits (P5). Legacy/offline devices keep the shipped starter schedule.
+      if(!accountMode){ await seedDefault(false); }
+      await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render();
+    }
+    else if(r==='need-auth'){
+      // An account session that can't be confirmed (expired/offline) → ask to sign in; stay usable offline.
+      if(loadingEl) loadingEl.classList.add('hidden');
+      openAuth('signin', { dismissible:false, reloadOnSuccess:true, onOffline: continueOffline });
+    }
+    else if(r==='need-key'){
+      // A signed-out device with no local data → the premium account gate. The device-key concept is fully
+      // retired from the public UI; the only escape is "continue offline".
+      if(loadingEl) loadingEl.classList.add('hidden');
+      openAuth('signup', { dismissible:false, showEscapes:true, onOffline: continueOffline });
+    }
+    else if(r==='backend-missing'){ if(loadingEl) loadingEl.classList.add('hidden'); showStartupState('backend-missing'); } // account schema not deployed
     else { showStartupState('load-failed'); } // unreachable
   }
   $('startupRetry').addEventListener('click', ()=>{ if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad(); });
-  $('startupKey').addEventListener('click', ()=>{
-    const k = window.prompt('مفتاح المزامنة (يُدخل مرة واحدة على هذا الجهاز):','');
-    if(k===null) return;
-    if(!submitDeviceKey(k)) return;
-    if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad();
-  });
-  $('startupOffline').addEventListener('click', async ()=>{
-    hideStartupState();
-    await seedDefault(true); // local-only: baseline-stamped, so a later reconnect merges (not overwrites)
-    await activateRoutinesIfNeeded();
-    if(loadingEl) loadingEl.classList.add('hidden');
-    render();
-  });
+  $('startupOffline').addEventListener('click', continueOffline);
 
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
-  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); checkNativeUpdate(); }); }catch(e){} }
+  if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); checkNativeUpdate();
+    try{ if(PIN() && PIN().isEnabled()){ PIN().relock(); openPinLock(); } }catch(e){} }); }catch(e){} }  // re-lock on app resume
 
-  const init = await initStorage();          // open IndexedDB, migrate once, load enriched state
+  // P2: detect an authenticated session BEFORE opening storage, so account mode picks the per-user DB.
+  // No session → legacy mode (byte-identical to the shipped app). Auth changes trigger a controlled reload.
+  try{
+    const sess = (sb && AC()) ? await AC().getSession(sb) : null;
+    accountUid = AC() ? AC().userIdOf(sess) : null;
+    accountMode = !!accountUid;
+    sessionActive = accountMode;
+    const su = sess && sess.user;
+    accountDisplayName = (su && ((su.user_metadata && su.user_metadata.display_name) || su.email)) || null;
+  }catch(e){ accountMode=false; accountUid=null; }
+  try{ if(sb && AC()) AC().onAuthChange(sb, (s, ev)=> onAuthChanged(s, ev)); }catch(e){}
+
+  const init = await initStorage();          // open IndexedDB (per-user in account mode), migrate once, load
   if(init.state) setState(init.state);
   applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
   selectedDate = parseKey(todayKey()); // canonical "today" once prefs (dayTimezone) are loaded
   if(init.state && !enrichedIsEmpty()){
-    // existing device: activate routines once (safe migration), then show local data; sync in background
-    await activateRoutinesIfNeeded();
+    // Existing device: show local data immediately, then PULL+MERGE *before* the one-time routines
+    // migration. Adopting any already-migrated remote state first (it carries the migv register) makes
+    // activateRoutinesIfNeeded() a true no-op here via its idempotency guard — so two devices on the same
+    // account can never migrate independently and clobber/duplicate/re-inject each other's routines
+    // (multi-device hardening). If the pull can't complete (offline), we fall through and migrate locally;
+    // migrateGeneration() is baseline-stamped, so a later convergence still can't lose a real edit.
     if(loadingEl) loadingEl.classList.add('hidden');
     render();
-    syncNow();
+    try{ await syncNow(); }catch(e){}   // pull+merge+commit (adopts remote migration); offline → caught
+    await activateRoutinesIfNeeded();
+    render();
   } else {
     // no local data: show nothing (not the default schedule) behind the overlay until we know the truth
     setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: prefs, tplArchive: { since: EPOCH_KEY, versions: [] } });
@@ -2468,6 +2984,26 @@
   }
   updateSyncBadge();
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
+  authReady = true;   // from now on, real auth transitions (sign-in/out/switch) trigger a controlled reload
+  try{ setupAccountUI(); }catch(e){}
+  try{ setupPinToggle(); }catch(e){}
+  if(accountMode){ track('app_open'); checkAdmin(); checkOnboarding(); updateGreeting(); } // P4 analytics + admin reveal + P5 onboarding + greeting
+  // Settings → "إعادة الجولة التعريفية" (account users; the tour is client-side, completion stays server-side).
+  if(accountMode && globalThis.AyyamOnboarding){
+    const oe = $('onbEntry');
+    if(oe){ oe.innerHTML = '<button class="btn ghost acct-open" id="replayOnb" style="margin-top:10px;">إعادة الجولة التعريفية</button>';
+      const rb=$('replayOnb'); if(rb) rb.addEventListener('click', ()=>{ try{ $('settingsView').classList.add('hidden'); $('mainView').classList.remove('hidden'); }catch(e){} replayOnboarding(); }); }
+  }
+  // P8 settings meta: app version, hide the legacy sync-key card for account users (never expose it), native update check.
+  try{
+    // On Android show the REAL installed APK versionName (e.g. 1.2.0) from the native bridge — the web/PWA
+    // line (APP_VERSION) and the Android line are separate schemes. Fall back to APP_VERSION if unavailable.
+    let shownVersion = APP_VERSION;
+    if(NATIVE){ try{ const info = await AyyamNative.appInfo(); if(info && info.version) shownVersion = info.version; }catch(e){} }
+    const av = $('appVersionInfo'); if(av) av.textContent = 'أيام · الإصدار ' + shownVersion + (NATIVE ? ' — أندرويد' : ' — ويب');
+    if(NATIVE){ const ur=$('appUpdateRow'); if(ur) ur.classList.remove('hidden');
+      const cb=$('checkUpdateBtn'); if(cb) cb.addEventListener('click', ()=>{ try{ manualUpdateCheck(); }catch(e){} }); }
+  }catch(e){}
   scheduleWidgetPush(); // seed the widget snapshot once startup state is settled
   scheduleNotifPlan();  // seed the local reminder plan
   if(NATIVE){

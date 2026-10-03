@@ -20,7 +20,7 @@ test('normal use raises no Content-Security-Policy violations', async ({ page })
   await expect(page.locator('.task').first()).toBeVisible();
   await waitSWControls(page);          // SW registration must be allowed by worker-src 'self'
   await addTask(page, 'مهمة CSP');      // exercise DOM writes + inline style attributes (style-src)
-  await page.locator('#openReports').click(); // reports view renders dynamic inline width/background styles
+  await page.locator('#bottomNav .bnav-item[data-screen="progress"]').click(); // reports view renders dynamic inline width/background styles
   await expect(page.locator('#reportsView')).toBeVisible();
   await page.waitForTimeout(300);
 

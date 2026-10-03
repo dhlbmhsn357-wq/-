@@ -1,0 +1,155 @@
+/* ============================================================================
+   Ayyam — P7 screen redesign layer
+   Applies the P6 design system (css/tokens.css + css/components.css) across the
+   shipped screens: elevates hierarchy, spacing, radius, shadow, touch targets and
+   status colours onto the semantic tokens. NO markup/logic/selector changes —
+   this only refines the look of the existing components. Loaded AFTER app.css.
+   ============================================================================ */
+
+/* NOTE: the Today view's VERTICAL geometry (header/hero/stats/week/groups/task heights) is kept as shipped
+   on purpose — the FAB is fixed to the viewport and changing the list height can float a checkbox under it.
+   Here we refine only colour/radius/shadow/weight (no padding/margin/height/gap/size changes) on Today. */
+
+/* ---------- header ---------- */
+.brand{letter-spacing:.6px;}
+.icon-btn{border-radius:var(--radius-md);color:var(--color-text-secondary);
+  transition:color var(--motion-fast) var(--ease-standard),border-color var(--motion-fast),background var(--motion-fast);}
+.icon-btn:hover{color:var(--color-text);border-color:var(--color-border-strong);}
+.icon-btn:active{transform:translateY(1px);}
+/* one unified SVG icon language across the header (replaces the old mixed emoji) */
+.icon-btn svg{width:20px;height:20px;display:block;}
+.theme-toggle button svg{width:17px;height:17px;display:block;}
+.theme-toggle button{display:flex;align-items:center;justify-content:center;}
+
+/* ---------- Today: hero, spectrum, stats (colour/radius/shadow only) ---------- */
+.seg{background:color-mix(in srgb,var(--color-text) 7%,transparent);}
+.stat{border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);}
+.stat .num{font-weight:var(--fw-bold);color:var(--color-text);}
+.stat .lbl{color:var(--color-text-secondary);}
+
+/* week strip */
+.wday .dot{border-color:var(--color-border);}
+.wday.today .dot{border-color:var(--color-primary);}
+.wday .dot.full{background:var(--color-success);border-color:var(--color-success);color:var(--color-on-primary);}
+
+/* ---------- task cards (colour/radius/shadow only — footprint unchanged) ---------- */
+.group-title{font-weight:var(--fw-semibold);color:var(--color-text);}
+.group-count{color:var(--color-text-secondary);}
+.task{border-radius:var(--radius-md);box-shadow:var(--shadow-sm);
+  transition:border-color var(--motion-fast) var(--ease-standard),transform var(--motion-fast);}
+.task:hover{border-color:var(--color-border-strong);}
+.check{border-radius:var(--radius-sm);border-color:var(--color-text-secondary);
+  transition:background var(--motion-fast),border-color var(--motion-fast);}
+.check.checked{background:var(--color-success);border-color:var(--color-success);color:var(--color-on-primary);}
+.task-title{font-weight:var(--fw-medium);}
+.task-time{color:var(--color-text-secondary);}
+/* status accents — calm, not shouting: a quiet inline-start rule + muted text */
+.task.overdue{border-inline-start:3px solid var(--color-overdue);}
+.task.excused{border-inline-start:3px solid var(--color-excused);}
+.task.replacement{border-inline-start:3px solid var(--color-replaced);}
+.task-del:hover{color:var(--color-danger);}
+
+/* ---------- bottom sheets (add/edit, actions, overview) ---------- */
+.sheet{background:var(--color-elevated);border-radius:var(--radius-xl) var(--radius-xl) 0 0;
+  padding:var(--space-md) var(--space-lg) calc(var(--space-2xl) + env(safe-area-inset-bottom));
+  gap:var(--space-md);box-shadow:var(--shadow-lg);}
+.sheet::before{content:'';display:block;width:38px;height:4px;border-radius:var(--radius-pill);
+  background:var(--color-border-strong);margin:2px auto var(--space-sm);}
+.sheet h2{font-size:19px;}
+.field label{font-size:var(--text-small);color:var(--color-text-secondary);}
+.field input,.field select{min-height:44px;border-radius:var(--radius-md);font-size:15px;
+  transition:border-color var(--motion-fast);}
+.field input:focus,.field select:focus{border-color:var(--color-primary);}
+.period-chip,.rec-chip{min-height:40px;border-radius:var(--radius-pill);transition:background var(--motion-fast),color var(--motion-fast),border-color var(--motion-fast);}
+.period-chip.active,.rec-chip.active{background:var(--color-primary);color:var(--color-on-primary);}
+.wd-chip{width:42px;height:42px;border-radius:var(--radius-md);}
+.wd-chip.active{background:var(--color-primary);color:var(--color-on-primary);}
+.action-item{border-radius:var(--radius-md);min-height:44px;transition:border-color var(--motion-fast);}
+.action-item:hover{border-color:var(--color-primary);}
+.action-item.danger{color:var(--color-danger);}
+
+/* ---------- buttons (unify with the DS feel) ---------- */
+.btn{min-height:44px;border-radius:var(--radius-md);font-size:14px;font-weight:var(--fw-semibold);
+  transition:background var(--motion-fast) var(--ease-standard),transform var(--motion-fast),opacity var(--motion-fast);}
+.btn:active{transform:translateY(1px);}
+.btn.primary{background:var(--color-primary);color:var(--color-on-primary);}
+.btn.primary:hover{background:var(--color-primary-hover);}
+.btn.ghost{background:var(--color-surface);color:var(--color-text-secondary);border:1px solid var(--color-border);}
+.btn.ghost:hover{color:var(--color-text);border-color:var(--color-border-strong);}
+
+/* ---------- FAB ---------- */
+.fab{background:var(--color-primary);color:var(--color-on-primary);box-shadow:var(--shadow-md);
+  transition:transform var(--motion-fast),box-shadow var(--motion-fast);}
+.fab:hover{box-shadow:var(--shadow-lg);}
+.fab:active{transform:translateY(1px) scale(.98);}
+
+/* ---------- Calendar ---------- */
+.cal-title{font-size:19px;}
+.cal-today-btn{min-height:40px;border-radius:var(--radius-md);}
+.cal-cell{border-radius:var(--radius-md);transition:border-color var(--motion-fast);}
+.cal-cell:hover:not(:disabled){border-color:var(--color-border-strong);}
+.cal-cell.today{border-color:var(--color-primary);box-shadow:0 0 0 2px var(--color-primary) inset;}
+.cal-sum-item{border-radius:var(--radius-md);}
+.day-progress-bar,.day-progress-fill{border-radius:var(--radius-pill);}
+.day-progress-fill{background:var(--color-success);}
+.day-state-pill{border-radius:var(--radius-pill);font-weight:var(--fw-semibold);}
+
+/* ---------- Insights ---------- */
+.ins-big{color:var(--color-primary);}
+.ins-bw-item{border-radius:var(--radius-md);}
+.ins-bw-item.best{border-inline-start:4px solid var(--color-success);}
+.ins-bw-item.weak{border-inline-start:4px solid var(--color-overdue);}
+
+/* ---------- Reports / Settings cards ---------- */
+.report-card{border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);padding:var(--space-lg);margin-top:var(--space-lg);}
+.report-card h3{font-size:15px;font-weight:var(--fw-bold);color:var(--color-text);}
+
+/* ---------- Settings: grouped sections (P8) ---------- */
+.set-wrap{padding-top:var(--space-sm);}
+.set-section{margin-top:var(--space-2xl);}
+.set-section:first-child{margin-top:var(--space-sm);}
+.set-title{font-size:12.5px;font-weight:var(--fw-bold);color:var(--color-text-secondary);
+  letter-spacing:.3px;margin:0 0 var(--space-sm);padding-inline-start:var(--space-xs);}
+.set-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-sm);padding:var(--space-lg);}
+.set-hint{color:var(--color-text-secondary);font-size:13px;line-height:1.7;margin:0;}
+.tpl-day-btn{min-height:40px;border-radius:var(--radius-pill);}
+.tpl-day-btn.active{border-color:var(--color-primary);}
+/* settings: a label + control row (used by the simplified Appearance section) */
+.set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.set-row-label{font-size:14px;color:var(--color-text);}
+/* admin entry (item 7): a clear, full-width primary action inside the admin-only section */
+.admin-open{width:100%;}
+/* manual update-check feedback (item 1) */
+.update-check-msg{font-size:13px;line-height:1.7;}
+.update-check-msg.is-ok{color:var(--color-success);}
+.update-check-msg.is-err{color:var(--color-danger);}
+.update-check-msg.is-info{color:var(--color-text-secondary);}
+
+/* ---------- Empty states (shared) ---------- */
+.empty-title{font-family:var(--font-ui);}
+.empty-state .btn{min-width:200px;}
+
+/* ---------- Loading ---------- */
+.loading-spinner{border-color:var(--color-border);border-top-color:var(--color-primary);}
+
+/* ---------- Local PIN lock (item 5) ---------- */
+.pin-view{position:fixed;inset:0;z-index:260;background:var(--color-bg);overflow-y:auto;
+  display:flex;align-items:center;justify-content:center;padding:24px 16px;}
+body.pin-open{overflow:hidden;}
+.pin-card{width:100%;max-width:320px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:var(--space-sm);}
+.pin-card .auth-brand{font-family:var(--font-display);font-size:38px;color:var(--color-text);margin-bottom:var(--space-sm);}
+.pin-title{font-family:var(--font-ui);font-weight:var(--fw-bold);font-size:var(--text-h3);color:var(--color-text);margin:0;}
+.pin-sub{color:var(--color-text-secondary);font-size:var(--text-small);margin:0 0 var(--space-sm);}
+.pin-dots{display:flex;gap:14px;margin:var(--space-sm) 0;}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--color-border-strong);transition:background var(--motion-fast),border-color var(--motion-fast);}
+.pin-dot.on{background:var(--color-primary);border-color:var(--color-primary);}
+.pin-msg{min-height:18px;font-size:var(--text-small);color:var(--color-danger);}
+.pin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:var(--space-sm);width:100%;max-width:260px;}
+.pin-key{height:64px;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-surface);
+  color:var(--color-text);font-family:var(--font-ui);font-size:24px;font-weight:var(--fw-semibold);cursor:pointer;
+  transition:background var(--motion-fast),transform var(--motion-fast);}
+.pin-key:hover{background:var(--color-elevated);}
+.pin-key:active{transform:scale(.96);}
+.pin-key-blank{visibility:hidden;}
+.pin-cancel{margin-top:var(--space-lg);max-width:200px;}

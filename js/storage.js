@@ -62,10 +62,14 @@
 
     static available() { return !!idb(); }
 
-    static async open() {
+    // dbName: the IndexedDB to open. Defaults to the legacy 'ayyam' DB (pre-auth / signed-out). When a
+    // user is authenticated the app opens a SEPARATE per-account DB ('ayyam::u:<uid>'), so one device's
+    // accounts never share a cache/outbox/recovery/diag — switching accounts can't leak data.
+    static async open(dbName) {
       const factory = idb();
       if (!factory) throw new Error('IndexedDB unavailable');
-      const req = factory.open(DB_NAME, DB_VERSION);
+      const name = (typeof dbName === 'string' && dbName) ? dbName : DB_NAME;
+      const req = factory.open(name, DB_VERSION);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'k' });
@@ -78,6 +82,7 @@
       const db = await reqP(req);
       db.onversionchange = () => db.close(); // let another tab upgrade
       const store = new AyyamStore(db);
+      store.dbName = name;
       const meta = await store.getMeta();
       store._seq = (meta && meta.lastSeq) || 0;
       // If the data was written by a NEWER app schema, do not touch it — surface it so the app can show a

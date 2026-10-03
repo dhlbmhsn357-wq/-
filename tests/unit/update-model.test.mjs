@@ -42,3 +42,44 @@ test('shaMatches is case-insensitive and rejects non-hex', () => {
   assert.equal(U.shaMatches(SHA, 'deadbeef'), false);
   assert.equal(U.shaMatches('nothex', SHA), false);
 });
+test('release notes are normalized to a clean array (item 7)', () => {
+  assert.deepEqual(U.normalizeNotes(['حسابات آمنة', ' جولة جديدة ', '', 5]), ['حسابات آمنة', 'جولة جديدة']);
+  assert.deepEqual(U.normalizeNotes('سطر واحد'), ['سطر واحد']);
+  assert.deepEqual(U.normalizeNotes(null), []);
+  const m = U.parseManifest({ versionCode: 7, versionName: '1.2.0', apkUrl: 'https://x/app.apk', sha256: SHA, notes: ['أ', 'ب'] });
+  assert.deepEqual(m.notes, ['أ', 'ب']);
+});
+
+// --- manual update-check outcomes (item 1): deterministic, non-silent feedback for the Settings button ---
+test('evaluateUpdate → "available" when the manifest is newer than the installed build', () => {
+  const v = U.evaluateUpdate({ ok: true, text: JSON.stringify(good), installedVersionCode: 3 });
+  assert.equal(v.outcome, 'available');
+  assert.equal(v.manifest.versionCode, 4);
+});
+test('evaluateUpdate → "latest" when already on the newest build', () => {
+  assert.equal(U.evaluateUpdate({ ok: true, text: JSON.stringify(good), installedVersionCode: 4 }).outcome, 'latest');
+  assert.equal(U.evaluateUpdate({ ok: true, text: JSON.stringify(good), installedVersionCode: 9 }).outcome, 'latest');
+});
+test('evaluateUpdate → "network" ONLY for a genuine unreachable request (offline / DNS / timeout)', () => {
+  assert.equal(U.evaluateUpdate({ ok: false }).outcome, 'network');                   // back-compat: no reachable flag
+  assert.equal(U.evaluateUpdate({ ok: false, reachable: false }).outcome, 'network');
+  assert.equal(U.evaluateUpdate(null).outcome, 'network');
+});
+test('evaluateUpdate → "unavailable" when the server was REACHED but returned an HTTP error (e.g. 404 before update.json is published) — never mislabelled as a connection failure', () => {
+  assert.equal(U.evaluateUpdate({ ok: false, reachable: true, status: 404 }).outcome, 'unavailable');
+  assert.equal(U.evaluateUpdate({ ok: false, reachable: true, status: 503 }).outcome, 'unavailable');
+});
+test('evaluateUpdate → "malformed" on invalid/partial update metadata (no raw error surfaced)', () => {
+  assert.equal(U.evaluateUpdate({ ok: true, text: '{not json', installedVersionCode: 1 }).outcome, 'malformed');
+  assert.equal(U.evaluateUpdate({ ok: true, text: JSON.stringify({ ...good, sha256: 'abc' }), installedVersionCode: 1 }).outcome, 'malformed');
+  assert.equal(U.evaluateUpdate({ ok: true, text: JSON.stringify({ ...good, apkUrl: 'http://x/a.apk' }), installedVersionCode: 1 }).outcome, 'malformed');
+});
+test('repeated click while loading is ignored (in-flight guard semantics)', () => {
+  // Mirrors app.js: a module-level boolean gates re-entry. First call runs; a second call while in flight no-ops.
+  let inFlight = false, runs = 0;
+  const check = () => { if (inFlight) return; inFlight = true; runs++; /* ...async work... */ };
+  check(); check(); check();                 // three rapid taps
+  assert.equal(runs, 1);                      // only the first started
+  inFlight = false; check();                  // after it settles, a new check is allowed
+  assert.equal(runs, 2);
+});

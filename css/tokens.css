@@ -1,0 +1,146 @@
+/* ============================================================================
+   Ayyam Design System — Tokens (P6)
+   The single source of truth for colour, type, spacing, radius, shadow, motion.
+   Loaded BEFORE app.css/components.css so everything consumes these variables.
+
+   Visual direction: modern Arabic, calm, premium, warm, quietly spiritual —
+   not childish, not a corporate dashboard, and a voice of its own (not Awwab).
+
+   Rule: components consume SEMANTIC tokens (--color-*, --text-*, --space-*,
+   --radius-*, --shadow-*, --motion-*). Do NOT hard-code hex/px in components
+   without a documented reason. Light + Dark are both first-class.
+   ============================================================================ */
+
+:root {
+  /* ---- palette primitives (raw, not used directly by components) ---- */
+  --gold-300:#f0c561; --gold-400:#E8B84B; --gold-500:#d9a733; --gold-600:#c2921f;
+  --sand-50:#F5F0E4;  --sand-100:#EFE9DC; --sand-200:#e6decb;
+  --ink-900:#11151b;  --ink-800:#171d25; --ink-700:#1a212b; --ink-600:#222b37; --ink-500:#2c3644;
+  --paper-0:#ffffff;  --paper-50:#fbf7ee; --paper-100:#F1EBDE;
+  --clay-500:#C4703A; --rose-500:#B9456B; --slate-500:#4A5A8C; --sky-500:#7C93C4;
+  --green-500:#7fae7a; --green-600:#4d8a49; --amber-500:#e0a23c; --red-500:#c46a6a; --red-600:#b6533f;
+
+  /* ---- semantic colour (DARK is the default theme) ---- */
+  --color-bg:            var(--ink-900);
+  --color-surface:       rgba(26,33,43,0.86);      /* cards */
+  --color-elevated:      rgba(34,43,55,0.94);      /* raised surfaces / sheets */
+  --color-primary:       var(--gold-400);
+  --color-primary-hover: var(--gold-300);
+  --color-primary-pressed:var(--gold-500);
+  --color-on-primary:    #16130a;                  /* text/icon on a primary fill */
+  --color-secondary:     var(--slate-500);
+  --color-accent:        var(--clay-500);
+  --color-text:          #ece7d8;
+  --color-text-secondary:#a7a596;
+  --color-muted:         #7c7a6e;
+  --color-border:        rgba(231,226,211,0.11);
+  --color-border-strong: rgba(231,226,211,0.20);
+  --color-success:       var(--green-500);
+  --color-warning:       var(--amber-500);
+  --color-danger:        var(--red-500);
+  --color-overdue:       #cf8155;
+  --color-excused:       #8f99bb;                  /* calm, non-judgmental */
+  --color-replaced:      #6aa197;
+  --color-focus:         var(--gold-300);
+  --color-scrim:         rgba(8,10,14,0.72);
+
+  /* prayer / time-period accents */
+  --color-fajr:var(--sky-500); --color-dhuhr:var(--gold-400); --color-asr:var(--clay-500);
+  --color-maghrib:var(--rose-500); --color-isha:var(--slate-500);
+
+  /* ---- typography ---- */
+  --font-display:'Aref Ruqaa', serif;   /* identity / large headings */
+  --font-ui:'Cairo', sans-serif;        /* interface + body */
+  --text-display:34px; --lh-display:1.2;
+  --text-h1:26px;      --lh-h1:1.3;
+  --text-h2:21px;      --lh-h2:1.35;
+  --text-h3:17px;      --lh-h3:1.45;
+  --text-body-lg:16px; --lh-body-lg:1.85;
+  --text-body:14px;    --lh-body:1.75;
+  --text-small:13px;   --lh-small:1.7;
+  --text-caption:11.5px; --lh-caption:1.6;
+  --text-button:14px;
+  --fw-regular:400; --fw-medium:500; --fw-semibold:600; --fw-bold:700; --fw-extrabold:800;
+
+  /* ---- spacing (4/8/12/16/20/24/32/40) ---- */
+  --space-xs:4px; --space-sm:8px; --space-md:12px; --space-lg:16px;
+  --space-xl:20px; --space-2xl:24px; --space-3xl:32px; --space-4xl:40px;
+
+  /* ---- radius ---- */
+  --radius-sm:8px; --radius-md:12px; --radius-lg:16px; --radius-xl:22px; --radius-pill:999px;
+
+  /* ---- shadows (subtle only — no heavy shadows/glass) ---- */
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.18);
+  --shadow-md:0 6px 18px rgba(0,0,0,0.22);
+  --shadow-lg:0 16px 40px rgba(0,0,0,0.34);
+
+  /* ---- motion ---- */
+  --motion-fast:120ms; --motion-normal:220ms; --motion-slow:360ms;
+  --ease-standard:cubic-bezier(.2,.7,.3,1);
+  --ease-out:cubic-bezier(0,0,.2,1);
+
+  /* ---- legacy aliases (kept so the shipped app.css keeps working unchanged) ---- */
+  --bg:var(--color-bg);
+  --surface:var(--color-surface);
+  --surface2:var(--color-elevated);
+  --line:var(--color-border);
+  --text:var(--color-text);
+  --text-dim:var(--color-text-secondary);
+  --fajr:var(--color-fajr); --dhuhr:var(--color-dhuhr); --asr:var(--color-asr);
+  --maghrib:var(--color-maghrib); --isha:var(--color-isha);
+  --good:var(--color-success); --bad:var(--color-danger);
+  --radius:var(--radius-lg);
+  --bg-overlay:rgba(10,12,16,0.72);
+  --bg-blur:0px;
+}
+
+/* ---- LIGHT theme ---- */
+[data-theme="day"] {
+  --color-bg:            var(--paper-100);
+  --color-surface:       rgba(255,255,255,0.90);
+  --color-elevated:      rgba(255,255,255,0.98);
+  --color-primary:       var(--gold-500);
+  --color-primary-hover: var(--gold-400);
+  --color-primary-pressed:var(--gold-600);
+  --color-on-primary:    #2a2410;
+  --color-secondary:     #3f4f82;
+  --color-accent:        #b15f2d;
+  --color-text:          #241f18;
+  --color-text-secondary:#6b6154;
+  --color-muted:         #938a7b;
+  --color-border:        rgba(30,26,18,0.12);
+  --color-border-strong: rgba(30,26,18,0.22);
+  --color-success:       var(--green-600);
+  --color-warning:       #b9791f;
+  --color-danger:        var(--red-600);
+  --color-overdue:       #b26a3e;
+  --color-excused:       #5f6a96;
+  --color-replaced:      #4f857c;
+  --color-focus:         var(--gold-600);
+  --color-scrim:         rgba(40,34,20,0.42);
+
+  --shadow-sm:0 1px 2px rgba(40,34,20,0.10);
+  --shadow-md:0 6px 18px rgba(40,34,20,0.12);
+  --shadow-lg:0 16px 40px rgba(40,34,20,0.18);
+
+  --bg-overlay:rgba(255,250,238,0.78);
+}
+
+/* Respect the OS theme when the app hasn't explicitly chosen one yet. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --color-bg:var(--paper-100); --color-surface:rgba(255,255,255,0.90); --color-elevated:rgba(255,255,255,0.98);
+    --color-primary:var(--gold-500); --color-on-primary:#2a2410; --color-text:#241f18; --color-text-secondary:#6b6154;
+    --color-muted:#938a7b; --color-border:rgba(30,26,18,0.12); --color-success:var(--green-600); --color-danger:var(--red-600);
+    --bg-overlay:rgba(255,250,238,0.78);
+  }
+}
+
+/* ---- reduced motion: honour the user's OS preference everywhere ---- */
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-fast:1ms; --motion-normal:1ms; --motion-slow:1ms; }
+  *, *::before, *::after {
+    animation-duration:0.001ms !important; animation-iteration-count:1 !important;
+    transition-duration:0.001ms !important; scroll-behavior:auto !important;
+  }
+}

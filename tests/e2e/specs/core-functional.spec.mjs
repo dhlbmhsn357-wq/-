@@ -14,13 +14,18 @@ test('first load WITH a device key seeds the schedule and syncs', async ({ page,
   expect(db.main.revision).toBeGreaterThan(0);
 });
 
-test('first load WITHOUT a device key shows the key screen, no defaults behind it', async ({ page }) => {
+test('first load WITHOUT a device key shows the account screen — the Device Key concept is fully retired', async ({ page }) => {
   await prepare(page, { key: false });
   await page.goto('/');
-  await expect(page.locator('#startupState')).toBeVisible();
-  await expect(page.locator('#startupMsg')).toContainText('مفتاح المزامنة');
-  await expect(page.locator('#startupKey')).toBeVisible();
-  expect(await page.locator('.task').count()).toBe(0); // no default schedule presented as data
+  // Public-launch behaviour: a genuinely new device is taken to the premium account gate. The device-key /
+  // sync-key concept is GONE from the public UI (only "continue offline" remains as an escape).
+  await expect(page.locator('#authView')).toBeVisible();
+  await expect(page.locator('#authSubmit')).toBeVisible();
+  await expect(page.locator('#authOffline')).toBeVisible();
+  await expect(page.locator('#authHaveKey')).toHaveCount(0);
+  await expect(page.locator('#authView')).not.toContainText('مفتاح');
+  await expect(page.locator('#startupState')).toBeHidden();
+  expect(await page.locator('.task').count()).toBe(0); // no default schedule presented as data behind the gate
 });
 
 test('add, edit title, edit time, edit period, complete, uncomplete, delete', async ({ page }) => {
@@ -60,11 +65,11 @@ test('navigation: prev/next day, settings, reports, back', async ({ page }) => {
   await expect(page.locator('#dayName')).not.toHaveText(day);
   await page.locator('#prevDay').click();
   await expect(page.locator('#dayName')).toHaveText(day);
-  await page.locator('#openSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#settingsView')).toBeVisible();
   await page.locator('#closeSettings').click();
   await expect(page.locator('#mainView')).toBeVisible();
-  await page.locator('#openReports').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="progress"]').click();
   await expect(page.locator('#reportsView')).toBeVisible();
   await page.locator('#closeReports').click();
   await expect(page.locator('#mainView')).toBeVisible();
@@ -74,13 +79,14 @@ test('editing a routine changes today/future but not a past day (routine managem
   await prepare(page, { key: true, now: '2026-09-27T10:00:00' }); // Sunday
   await page.goto('/');
   await expect(page.locator('.task').first()).toBeVisible();
-  // edit the recurring routine via the management screen (applies from today forward, past immutable)
-  await page.locator('#openSettings').click();
+  // edit the recurring routine via the Routine screen (now its own tab, moved out of Settings)
+  await page.locator('#bottomNav .bnav-item[data-screen="routine"]').click();
+  await expect(page.locator('#routineView')).toBeVisible();
   await page.locator('.tpl-day-btn', { hasText: 'الأحد' }).click();
   await page.locator('#tplTasks .tpl-routine-main').first().click();
   await page.locator('#taskTitle').fill('روتين معدّل اليوم');
   await page.locator('#saveAdd').click(); // template context → "this and future" (no scope prompt)
-  await page.locator('#closeSettings').click();
+  await page.locator('#bottomNav .bnav-item[data-screen="today"]').click();
   // today (Sunday 27) shows the edited routine
   await expect(page.locator('.task-title', { hasText: 'روتين معدّل اليوم' })).toBeVisible();
   // a PAST Sunday (Sep 20, before migrationDate) keeps the old schedule (not the edit)

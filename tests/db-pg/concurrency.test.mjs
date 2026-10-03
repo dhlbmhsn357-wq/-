@@ -23,7 +23,13 @@ const SHIM = `
   create schema if not exists extensions;
   grant usage on schema public, extensions to anon, authenticated, service_role;
   alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
-  alter default privileges in schema public grant all on functions to anon, authenticated, service_role;`;
+  alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+  create schema if not exists auth;
+  create table if not exists auth.users (id uuid primary key, email text);
+  grant usage on schema auth to anon, authenticated, service_role;
+  create or replace function auth.uid() returns uuid language sql stable as $sql$
+    select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid; $sql$;
+  grant execute on function auth.uid() to anon, authenticated, service_role;`;
 
 before(async () => {
   if (skip) return;

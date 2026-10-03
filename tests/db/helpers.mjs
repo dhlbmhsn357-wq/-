@@ -23,6 +23,16 @@ const SUPABASE_SHIM = `
   alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
   alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
   alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+  -- Minimal auth shim: what a real Supabase project already provides (auth.users + auth.uid() reading
+  -- the request JWT claims). Never part of our migrations — Supabase owns it. Lets P1 (auth foundation)
+  -- apply and lets tests act as a specific authenticated user.
+  create schema if not exists auth;
+  create table if not exists auth.users (id uuid primary key, email text);
+  grant usage on schema auth to anon, authenticated, service_role;
+  create or replace function auth.uid() returns uuid language sql stable as $sql$
+    select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid;
+  $sql$;
+  grant execute on function auth.uid() to anon, authenticated, service_role;
 `;
 
 export function migrationFiles() {
@@ -73,6 +83,71 @@ export const rpc = {
     (await asAnon(db, 'select public.ayyam_restore($1, $2, $3, $4::uuid) as r',
       [key, snapshotId, expected, opId])).rows[0].r,
 };
+
+// ---- authenticated identity helpers (P1) — act as a specific Supabase user ----
+/** Create an auth.users row and return its id (as service_role, like Supabase Auth does). */
+export async function createUser(db, email) {
+  const id = randomUUID();
+  await db.query('insert into auth.users (id, email) values ($1, $2)', [id, email || (id + '@t.test')]);
+  return id;
+}
+/** Run SQL as the `authenticated` role WITH a given user's JWT (auth.uid() === uid). */
+export async function asUser(db, uid, sql, params = []) {
+  await db.query("select set_config('request.jwt.claims', $1, false)", [JSON.stringify({ sub: uid, role: 'authenticated' })]);
+  await db.exec('set role authenticated');
+  try {
+    return await db.query(sql, params);
+  } finally {
+    await db.exec('reset role');
+    await db.query("select set_config('request.jwt.claims', '', false)");
+  }
+}
+// v2 RPC wrappers (called as an authenticated user; identity comes from the JWT, never a param).
+export const rpc2 = {
+  pull: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_pull_v2() as r')).rows[0].r,
+  commit: async (db, uid, { expected, data, opId = randomUUID(), reason = 'sync' }) =>
+    (await asUser(db, uid, 'select public.ayyam_commit_v2($1, $2::jsonb, $3::uuid, $4) as r',
+      [expected, JSON.stringify(data), opId, reason])).rows[0].r,
+  listSnapshots: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_list_snapshots_v2() as r')).rows[0].r,
+  restore: async (db, uid, { snapshotId, expected, opId = randomUUID() }) =>
+    (await asUser(db, uid, 'select public.ayyam_restore_v2($1, $2, $3::uuid) as r', [snapshotId, expected, opId])).rows[0].r,
+  registerPush: async (db, uid, { endpoint, p256dh = 'p', auth = 'a' }) =>
+    (await asUser(db, uid, 'select public.register_push_v2($1, $2, $3) as r', [endpoint, p256dh, auth])).rows[0].r,
+  claim: async (db, uid, key = DEVICE_KEY) => (await asUser(db, uid, 'select public.ayyam_claim($1) as r', [key])).rows[0].r,
+  freeze: async (db, uid, key = DEVICE_KEY) => (await asUser(db, uid, 'select public.ayyam_freeze_legacy($1) as r', [key])).rows[0].r,
+  accountState: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_account_state_v2() as r')).rows[0].r,
+  begin: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_migration_begin_v2() as r')).rows[0].r,
+  complete: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_migration_complete_v2() as r')).rows[0].r,
+  // P4 admin/analytics
+  track: async (db, uid, { name, platform = null, appVersion = null, displayName = null } = {}) =>
+    (await asUser(db, uid, 'select public.ayyam_track($1,$2,$3,$4) as r', [name, platform, appVersion, displayName])).rows[0].r,
+  isAdmin: async (db, uid) => (await asUser(db, uid, 'select public.is_admin() as r')).rows[0].r,
+  adminOverview: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_admin_overview() as r')).rows[0].r,
+  adminUsers: async (db, uid, { search = null, limit = 25, offset = 0, sort = 'last_seen_at', dir = 'desc' } = {}) =>
+    (await asUser(db, uid, 'select public.ayyam_admin_users($1,$2,$3,$4,$5) as r', [search, limit, offset, sort, dir])).rows[0].r,
+  // P5 onboarding
+  onbGet: async (db, uid) => (await asUser(db, uid, 'select public.ayyam_onboarding_get() as r')).rows[0].r,
+  onbProgress: async (db, uid, { step, done = false, via = null } = {}) =>
+    (await asUser(db, uid, 'select public.ayyam_onboarding_progress($1,$2,$3) as r', [step, done, via])).rows[0].r,
+};
+
+/** Grant a user the admin role the ONLY legitimate way — as service_role (like the SQL editor). */
+export async function grantAdmin(db, uid) {
+  await db.query('set role service_role');
+  try { await db.query("insert into public.user_roles (user_id, role) values ($1,'admin') on conflict (user_id) do update set role='admin'", [uid]); }
+  finally { await db.exec('reset role'); }
+}
+
+// A migration backend bound to a specific authenticated user, for the P2 migration engine (AyyamAccount.migrate).
+export function migrationBackend(db, uid, key = DEVICE_KEY) {
+  return {
+    claim: () => rpc2.claim(db, uid, key),
+    begin: () => rpc2.begin(db, uid),
+    complete: () => rpc2.complete(db, uid),
+    pull: () => rpc2.pull(db, uid),
+    commit: (expected, data, opId, reason) => rpc2.commit(db, uid, { expected, data, opId, reason }),
+  };
+}
 
 export const bundle = (logs = {}, extra = {}) => ({
   template: { sat: [], sun: [], mon: [], tue: [], wed: [], thu: [], fri: [] },
