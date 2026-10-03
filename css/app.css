@@ -177,9 +177,10 @@
   #authView:not(.hidden) ~ .bottom-nav,
   #pinView:not(.hidden) ~ .bottom-nav,
   body.auth-open .bottom-nav,
-  body.onb-open .bottom-nav,
   body.admin-open .bottom-nav,
   body.pin-open .bottom-nav{ display:none !important; }
+  /* NOTE: the nav stays VISIBLE during onboarding (body.onb-open) on purpose — the guided tour spotlights it
+     and the Routine tab. The onboarding scrim sits above it, so it is shown but not interactive during the tour. */
   @media (prefers-reduced-motion: reduce){ .bnav-item{transition:none;} }
 
   /* modal */

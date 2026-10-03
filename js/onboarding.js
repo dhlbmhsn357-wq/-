@@ -6,7 +6,7 @@
 // centered card, and closing always hands control back.
 (function (global) {
   'use strict';
-  var steps = [], idx = 0, cbProgress = null, cbDone = null, mode = null;
+  var steps = [], idx = 0, cbProgress = null, cbDone = null, cbPrepare = null, mode = null;
 
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -140,11 +140,24 @@
     } catch (e) { return 0; }
   }
 
+  // Move to step i: run the app-supplied per-step prepare hook FIRST (navigate to the right screen / open the
+  // relevant UI so the step can spotlight a REAL element), then render + position. The hook may be async.
+  function goToStep(i) {
+    idx = Math.min(Math.max(i, 0), steps.length - 1);
+    if (mode !== 'tour') return;
+    var s = steps[idx] || {};
+    if (typeof cbPrepare === 'function') {
+      var p; try { p = cbPrepare(s, idx); } catch (e) { p = null; }
+      if (p && typeof p.then === 'function') { p.then(function () { if (mode === 'tour') renderStep(); }, function () { if (mode === 'tour') renderStep(); }); return; }
+    }
+    renderStep();
+  }
+
   function bindStep() {
     var next = $('onbNext'); if (next) next.addEventListener('click', function () {
-      if (idx >= steps.length - 1) { finish('finished'); } else { idx++; renderStep(); }
+      if (idx >= steps.length - 1) { finish('finished'); } else { goToStep(idx + 1); }
     });
-    var prev = $('onbPrev'); if (prev) prev.addEventListener('click', function () { if (idx > 0) { idx--; renderStep(); } });
+    var prev = $('onbPrev'); if (prev) prev.addEventListener('click', function () { if (idx > 0) { goToStep(idx - 1); } });
     var skip = $('onbSkip'); if (skip) skip.addEventListener('click', function () { finish('skipped'); });
   }
 
@@ -190,10 +203,10 @@
     opts = opts || {};
     steps = opts.steps || []; if (!steps.length) return;
     idx = Math.min(Math.max(opts.startStep || 0, 0), steps.length - 1);
-    cbProgress = opts.onProgress; cbDone = opts.onDone; mode = 'tour';
+    cbProgress = opts.onProgress; cbDone = opts.onDone; cbPrepare = opts.onBeforeStep; mode = 'tour';
     show();
     addListeners();
-    renderStep();
+    goToStep(idx);
   }
 
   // ---- optional starter setup (explicit selection ONLY — nothing is added without a tick) ----
@@ -240,7 +253,7 @@
   function close() { removeListeners(); mode = null; hideView(); }
   // Android hardware Back: in the tour, step back if possible, else exit (counts as skip); on the starter, skip.
   function back() {
-    if (mode === 'tour') { if (idx > 0) { idx--; renderStep(); } else { finish('skipped'); } return true; }
+    if (mode === 'tour') { if (idx > 0) { goToStep(idx - 1); } else { finish('skipped'); } return true; }
     if (mode === 'starter') { close(); return true; }
     return false;
   }

@@ -641,16 +641,30 @@
   }
   // ---------- first-time onboarding (P5): a calm spotlight tour with REAL server-side completion. Shown only
   // for a first account (server onboarding_completed_at is null); resumable (server step); skip/replay safe.
+  // A REAL guided tour: each step navigates to its screen (`nav`), opens the relevant UI (`open`) and spotlights
+  // an actual element (`target`). A centered step (no target) is used ONLY where a new, empty account has no
+  // element to point at (e.g. flexibility actions live on a task's menu, and there are no tasks yet).
   const ONBOARDING_STEPS = [
-    { icon:'🌙', title:'أهلًا بك في أيام', body:'رفيقك اليومي لتنظيم صلواتك وأورادك ومهامك، ومتابعة أيامك بثبات.' },
-    { target:'.hero', title:'صفحة اليوم', body:'هنا جدول يومك بحسب مواقيت الصلاة — تابع ما أنجزته وما تبقّى بلمحة.' },
-    { target:'#fabAdd', title:'إضافة مهمة', body:'من هذا الزر تضيف مهمة أو وردًا جديدًا في أي وقت.' },
-    { icon:'🔁', title:'التكرار', body:'لكل مهمة اختر تكرارها: اليوم فقط، أو يوميًا، أو أسبوعيًا، أو أيامًا محددة.' },
-    { icon:'🌿', title:'المرونة', body:'يومك ليس دائمًا واحدًا: علّم المهمة «معذور» بلا تقصير، أو «استبدلها» بأخرى.' },
-    { icon:'🧭', title:'شريط التنقّل', body:'من الشريط السفلي تنتقل بين اليوم والتقويم والروتين والتقدّم والإعدادات بلمسة واحدة.' },
-    { icon:'🗓️', title:'الروتين الأسبوعي', body:'رتّب أورادك المتكررة لكل يوم من تبويب «الروتين»، وأضف روتينًا جديدًا من زر الإضافة أعلى الصفحة.' },
-    { icon:'✨', title:'ابدأ يومك', body:'كل يوم فرصة جديدة. لنبدأ أولى خطواتك في أيام.', cta:'ابدأ يومك' },
+    { nav:'today', target:'.hero', title:'صفحة اليوم', body:'هنا جدول يومك بحسب مواقيت الصلاة — تابع ما أنجزته وما تبقّى بلمحة.' },
+    { nav:'today', target:'#fabAdd', title:'إضافة مهمة', body:'من هذا الزر تضيف مهمة أو وردًا جديدًا في أي وقت.' },
+    { nav:'today', open:'add', target:'#recPick', title:'التكرار', body:'حدد هل المهمة اليوم فقط، يوميًا، أسبوعيًا أو أيامًا محددة.' },
+    { icon:'🌿', title:'المرونة', body:'عند الحاجة: علّم مهمتك «معذور» بلا تقصير، أو «استبدلها» بأخرى — من قائمة المهمة.' },
+    { nav:'today', target:'#bottomNav', title:'شريط التنقّل', body:'من الشريط السفلي تنتقل بين اليوم والتقويم والروتين والتقدّم والإعدادات.' },
+    { nav:'routine', target:'#bottomNav .bnav-item[data-screen="routine"]', title:'الروتين', body:'رتّب أورادك المتكررة لكل يوم من تبويب «الروتين».' },
+    { nav:'routine', target:'#tplAddTask', title:'إضافة روتين', body:'اختر اليوم من الأعلى ثم اضغط «إضافة روتين»: اكتب الاسم، حدد الوقت/الفترة، واحفظ — وكرّر لبقية أيام أسبوعك.' },
+    { nav:'today', icon:'✨', title:'ابدأ يومك', body:'كل يوم فرصة جديدة. لنبدأ خطوتك الأولى في أيام.', cta:'ابدأ يومك' },
   ];
+  // Per-step preparation for the guided tour: switch to the step's screen and open/close the add sheet so the
+  // spotlight lands on a REAL, visible element. Explanatory only — never writes user data.
+  async function onboardingBeforeStep(step){
+    try{
+      if(!step || step.open !== 'add'){ try{ closeAddSheet(); }catch(e){} }
+      if(step && step.nav){ showScreen(step.nav); }
+      if(step && step.open === 'add'){ try{ showScreen('today'); openAddSheet(); }catch(e){} }
+    }catch(e){}
+    // let the screen switch / sheet open settle before the tour measures + spotlights the target
+    await new Promise(function(res){ requestAnimationFrame(function(){ requestAnimationFrame(res); }); });
+  }
   // Suggested starter items — added as daily routines ONLY when the user explicitly ticks them.
   const STARTER_SUGGESTIONS = [
     { id:'st-fajr-sunnah',    title:'ركعتا الفجر',   period:'fajr' },
@@ -675,9 +689,12 @@
     globalThis.AyyamOnboarding.startTour({
       steps: ONBOARDING_STEPS,
       startStep: startStep,
+      onBeforeStep: onboardingBeforeStep,   // navigate + open the right UI so each step spotlights a real element
       onProgress: (i)=>{ try{ sb.rpc('ayyam_onboarding_progress', { p_step:i, p_done:false }); }catch(e){} },
       onDone: async (via)=>{
         onboardingActive = false;
+        try{ closeAddSheet(); }catch(e){}           // leave no sheet open from the recurrence step
+        try{ showScreen('today'); }catch(e){}       // always hand back on Today, never the routine tab
         try{ await withTimeout(sb.rpc('ayyam_onboarding_progress', { p_step:ONBOARDING_STEPS.length-1, p_done:true, p_via:via }), SYNC_TIMEOUT_MS); }catch(e){}
         // Offer the optional starter ONLY on a genuine finish of a still-empty account (never on skip/replay).
         if(via==='finished' && enrichedIsEmpty() && !onboardingReplay){ openStarterSetup(); }
