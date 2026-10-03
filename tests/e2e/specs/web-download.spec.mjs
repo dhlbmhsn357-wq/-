@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { prepare, resetBackend, skipOnboarding } from '../helpers.mjs';
+import { prepare, resetBackend, skipOnboarding, waitSWControls } from '../helpers.mjs';
 
 test.beforeEach(async ({ request }) => { await resetBackend(request); });
 test.describe.configure({ retries: 2, timeout: 90000 });
@@ -44,6 +44,17 @@ test('the /download page shows the web-only state on iOS (no APK button)', async
   await expect(page.locator('#dlBlock')).toBeHidden();
   await expect(page.locator('#iosBlock')).toContainText('غير متاحة على هذا الجهاز');
   await ctx.close();
+});
+
+test('the service worker does NOT hijack /download — it serves the real page, not the app shell', async ({ page }) => {
+  // load the app so the service worker installs and takes control
+  await prepare(page, { key: false, now: '2026-09-28T09:00:00' });
+  await page.goto('/');
+  await waitSWControls(page);
+  // with the SW controlling, navigating to the download page must still serve download.html (not index.html)
+  await page.goto('/download.html');
+  await expect(page.locator('#dlBtn')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('#authView')).toHaveCount(0); // proves it is NOT the SPA app shell
 });
 
 // ---------------- in-app install card ----------------
