@@ -59,21 +59,15 @@
   function render() {
     var view = $('authView'); if (!view) return;
     var closable = mode !== 'migrating' && (opts.dismissible !== false);
-    // The only first-run escape is "continue without an account". The device-key / sync-key concept is fully
-    // retired from the public UI (it is used internally for legacy migration only, read from device storage).
-    var escapes = '';
-    if (opts.showEscapes && mode !== 'migrating' && mode !== 'reset') {
-      escapes = '<div class="auth-escapes">'
-        + '<button type="button" class="auth-escape" id="authOffline">المتابعة بدون حساب الآن</button>'
-        + '</div>';
-    }
+    // No guest / local-only / "continue without account" escape exists: the only way into the app is Login /
+    // Create account. The device-key / sync-key concept is fully retired from the public UI (used internally for
+    // the original owner's legacy migration only, read from device storage — never offered as a usage path).
     view.innerHTML =
       '<div class="auth-scroll">'
       + '<div class="auth-card">'
       + (closable ? '<button type="button" class="auth-close" id="authClose" aria-label="إغلاق">✕</button>' : '')
       + '<div class="auth-brand">أيام</div>'
       + '<div class="auth-body">' + bodyFor(mode) + '</div>'
-      + escapes
       + '</div></div>';
     bind();
     var first = $('authEmail') || $('authPass');
@@ -99,7 +93,6 @@
     });
     var fg = $('authForgot'); if (fg) fg.addEventListener('click', function () { setMode('forgot'); });
     var cl = $('authClose'); if (cl) cl.addEventListener('click', function () { if (typeof handlers.onClose === 'function') handlers.onClose(); });
-    var off = $('authOffline'); if (off) off.addEventListener('click', function () { if (typeof handlers.onOffline === 'function') handlers.onOffline(); });
     var rt = $('authMigrateRetry'); if (rt) rt.addEventListener('click', function () { if (typeof handlers.onMigrateRetry === 'function') handlers.onMigrateRetry(); });
   }
 

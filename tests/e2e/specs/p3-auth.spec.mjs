@@ -69,11 +69,12 @@ test('the session is restored after a restart (no auth gate on reload)', async (
   await expect(page.locator('#acctSignOut')).toBeVisible({ timeout: 10000 });   // still signed in
 });
 
-test('the account gate can be escaped to continue without an account', async ({ page }) => {
+test('the account gate CANNOT be escaped — no guest / continue-without-account path exists', async ({ page }) => {
   await freshGate(page);
-  await page.locator('#authOffline').click();
-  await expect(page.locator('#authView')).toBeHidden();
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 15000 });  // app usable, local-only
+  // the escape control is gone from the DOM, and nothing behind the gate is usable without an account
+  await expect(page.locator('#authOffline')).toHaveCount(0);
+  await expect(page.locator('.task')).toHaveCount(0);
+  await expect(page.locator('#authView')).toBeVisible();
 });
 
 test('a password-recovery link opens the reset screen and updates the password', async ({ page }) => {

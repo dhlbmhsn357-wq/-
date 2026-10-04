@@ -17,11 +17,11 @@ test('first load WITH a device key seeds the schedule and syncs', async ({ page,
 test('first load WITHOUT a device key shows the account screen — the Device Key concept is fully retired', async ({ page }) => {
   await prepare(page, { key: false });
   await page.goto('/');
-  // Public-launch behaviour: a genuinely new device is taken to the premium account gate. The device-key /
-  // sync-key concept is GONE from the public UI (only "continue offline" remains as an escape).
+  // Public-launch behaviour: a genuinely new device is taken to the premium account gate. There is NO guest /
+  // local-only / "continue without account" escape, and the device-key / sync-key concept is GONE from the UI.
   await expect(page.locator('#authView')).toBeVisible();
   await expect(page.locator('#authSubmit')).toBeVisible();
-  await expect(page.locator('#authOffline')).toBeVisible();
+  await expect(page.locator('#authOffline')).toHaveCount(0);   // no "continue without account" escape
   await expect(page.locator('#authHaveKey')).toHaveCount(0);
   await expect(page.locator('#authView')).not.toContainText('مفتاح');
   await expect(page.locator('#startupState')).toBeHidden();
