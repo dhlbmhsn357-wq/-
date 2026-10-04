@@ -8,13 +8,18 @@ test('the device-key / sync-key concept is GONE from the public UI (gate + setti
   await prepare(page, { key: false, now: '2026-09-28T09:00:00' });
   await page.goto('/');
   await expect(page.locator('#authView')).toBeVisible({ timeout: 15000 });
-  // the gate offers "continue offline" but NEVER a sync-key option
-  await expect(page.locator('#authOffline')).toBeVisible();
+  // the gate NEVER offers a sync-key option (nor a guest escape)
   await expect(page.locator('#authHaveKey')).toHaveCount(0);
+  await expect(page.locator('#authOffline')).toHaveCount(0);
   await expect(page.locator('#authView')).not.toContainText('مفتاح');
-  // continue offline → settings has NO sync-key entry
-  await page.locator('#authOffline').click();
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 15000 });
+  // create an account (the only way in) → settings has NO sync-key entry
+  await page.locator('#authName').fill('مستخدم');
+  await page.locator('#authEmail').fill('nokey@t.test');
+  await page.locator('#authPass').fill('pass1234');
+  await page.locator('#authSubmit').click();
+  await expect(page.locator('#onbView')).toBeVisible({ timeout: 25000 });
+  await skipOnboarding(page);
+  await expect(page.locator('#mainView')).toBeVisible();
   await page.locator('#bottomNav .bnav-item[data-screen="settings"]').click();
   await expect(page.locator('#enterKeyBtn')).toHaveCount(0);
   await expect(page.locator('#syncKeyCard')).toHaveCount(0);

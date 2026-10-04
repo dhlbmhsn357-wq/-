@@ -87,7 +87,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.3.4'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  const APP_VERSION = '5.3.5'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
   // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
   // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
@@ -548,8 +548,8 @@
   }
   const authErr = (e)=> authMessage(e, 'signin'); // back-compat
 
-  // Open the premium full-screen auth experience. `o.showEscapes` (first-run gate only) offers "continue
-  // without an account" + a tucked-away legacy sync-key path; a genuinely new user never sees the key concept.
+  // Open the premium full-screen account gate (Login / Create account). There is no guest / local-only /
+  // "continue without account" path, and the device-key / sync-key concept is never exposed in the public UI.
   function openAuth(mode, o){
     o = o || {};
     const AU = globalThis.AyyamAuthUI; if(!AU){ return; }
@@ -599,9 +599,8 @@
         }
       },
       onClose: ()=>{ AU.close(); if(typeof o.onClose==='function') o.onClose(); },
-      onOffline: async ()=>{ AU.close(); if(typeof o.onOffline==='function') await o.onOffline(); },
     });
-    AU.open(mode||'signin', { dismissible: o.dismissible !== false, showEscapes: !!o.showEscapes });
+    AU.open(mode||'signin', { dismissible: o.dismissible !== false });
   }
 
   function displayNameOf(sess){ try{ const su = sess && sess.user; return (su && su.user_metadata && su.user_metadata.display_name) || ''; }catch(e){ return ''; } }
@@ -2955,55 +2954,45 @@
     el.classList.remove('hidden');
     const msg=$('startupMsg'), icon=$('startupIcon');
     const retry=$('startupRetry'), off=$('startupOffline');
-    [retry,off].forEach(b=>{ if(b) b.classList.add('hidden'); });
+    [retry,off].forEach(b=>{ if(b) b.classList.add('hidden'); }); // the offline entry is retired — never shown
     if(kind==='backend-missing'){
       // Account schema/RPCs not deployed on this backend yet (safe, accurate — no token/secret surfaced).
       icon.textContent='🛠️';
-      msg.textContent='خدمة الحسابات غير مهيأة على الخادم بعد. يمكنك المتابعة دون حساب الآن، والمزامنة لاحقًا.';
+      msg.textContent='خدمة الحسابات غير مهيأة على الخادم بعد. حاول مرة أخرى بعد قليل.';
       if(retry) retry.classList.remove('hidden');
-      if(off) off.classList.remove('hidden');
     } else { // load-failed
       icon.textContent='☁️';
-      msg.textContent='تعذّر تحميل بياناتك من السحابة. تحقّق من الاتصال وأعد المحاولة.';
+      msg.textContent='تعذّر تحميل بيانات حسابك. تحقّق من الاتصال وأعد المحاولة.';
       if(retry) retry.classList.remove('hidden');
-      if(off) off.classList.remove('hidden');
     }
-  }
-  // Continue as a local-only device (baseline-stamped, so a later reconnect merges rather than overwrites).
-  async function continueOffline(){
-    hideStartupState();
-    try{ if(globalThis.AyyamAuthUI) globalThis.AyyamAuthUI.close(); }catch(e){}
-    await seedDefault(true);
-    await activateRoutinesIfNeeded();
-    if(loadingEl) loadingEl.classList.add('hidden');
-    render();
   }
   async function runFirstLoad(){
     const r = await firstLoadPull();
     if(r==='ready'){ hideStartupState(); await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render(); }
     else if(r==='empty'){
       hideStartupState();
-      // Account mode: a NEW account starts EMPTY — the onboarding + optional starter let the user choose what
-      // to keep. We never auto-add worship/habits (P5). Legacy/offline devices keep the shipped starter schedule.
+      // A NEW account starts EMPTY — onboarding + optional starter let the user choose what to keep. We never
+      // auto-add worship/habits (P5). (The internal legacy device-key path, owner-migration only, keeps its starter.)
       if(!accountMode){ await seedDefault(false); }
       await activateRoutinesIfNeeded(); if(loadingEl) loadingEl.classList.add('hidden'); render();
     }
     else if(r==='need-auth'){
-      // An account session that can't be confirmed (expired/offline) → ask to sign in; stay usable offline.
+      // An account session that can't be confirmed (JWT expired) → sign in again. No guest/offline escape.
       if(loadingEl) loadingEl.classList.add('hidden');
-      openAuth('signin', { dismissible:false, reloadOnSuccess:true, onOffline: continueOffline });
+      openAuth('signin', { dismissible:false, reloadOnSuccess:true });
     }
     else if(r==='need-key'){
-      // A signed-out device with no local data → the premium account gate. The device-key concept is fully
-      // retired from the public UI; the only escape is "continue offline".
+      // No authenticated session → the account gate ONLY (Login / Create account). There is no guest mode, no
+      // "continue without account", and no device-key UI. First-run offline cannot authenticate: say so honestly —
+      // there is deliberately no local-only entry (item 6).
       if(loadingEl) loadingEl.classList.add('hidden');
-      openAuth('signup', { dismissible:false, showEscapes:true, onOffline: continueOffline });
+      openAuth('signup', { dismissible:false });
+      if(navigator.onLine===false && globalThis.AyyamAuthUI){ try{ globalThis.AyyamAuthUI.message('تحتاج اتصالًا بالإنترنت لتسجيل الدخول أو إنشاء حساب في أول مرة.', 'info'); }catch(e){} }
     }
     else if(r==='backend-missing'){ if(loadingEl) loadingEl.classList.add('hidden'); showStartupState('backend-missing'); } // account schema not deployed
     else { showStartupState('load-failed'); } // unreachable
   }
   $('startupRetry').addEventListener('click', ()=>{ if(loadingEl) loadingEl.classList.remove('hidden'); hideStartupState(); runFirstLoad(); });
-  $('startupOffline').addEventListener('click', continueOffline);
 
   // Native: load the secure device key into memory before anything reads it, and sync on app resume.
   if(NATIVE){ try{ await AyyamNative.hydrate(); }catch(e){} try{ AyyamNative.onResume(()=>{ scheduleSync(); scheduleWidgetPush(); scheduleNotifPlan(); checkNativeUpdate();
@@ -3021,27 +3010,47 @@
   }catch(e){ accountMode=false; accountUid=null; }
   try{ if(sb && AC()) AC().onAuthChange(sb, (s, ev)=> onAuthChanged(s, ev)); }catch(e){}
 
-  const init = await initStorage();          // open IndexedDB (per-user in account mode), migrate once, load
-  if(init.state) setState(init.state);
-  applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
-  selectedDate = parseKey(todayKey()); // canonical "today" once prefs (dayTimezone) are loaded
-  if(init.state && !enrichedIsEmpty()){
-    // Existing device: show local data immediately, then PULL+MERGE *before* the one-time routines
-    // migration. Adopting any already-migrated remote state first (it carries the migv register) makes
-    // activateRoutinesIfNeeded() a true no-op here via its idempotency guard — so two devices on the same
-    // account can never migrate independently and clobber/duplicate/re-inject each other's routines
-    // (multi-device hardening). If the pull can't complete (offline), we fall through and migrate locally;
-    // migrateGeneration() is baseline-stamped, so a later convergence still can't lose a real edit.
-    if(loadingEl) loadingEl.classList.add('hidden');
-    render();
-    try{ await syncNow(); }catch(e){}   // pull+merge+commit (adopts remote migration); offline → caught
-    await activateRoutinesIfNeeded();
-    render();
+  // AUTH-FIRST (security / no guest mode): we open a personal IndexedDB and render/sync ONLY when this session is
+  // authorised for the data it would show — an authenticated account (its OWN per-user namespace, dbNameFor(uid)),
+  // OR an internal legacy device-key (used ONLY for the original owner's recovery/migration; the public web bundle
+  // never ships a key and there is NO public UI to enter one, so a random visitor can never have one). A visitor
+  // with NEITHER is unauthenticated: we do NOT open any personal store before we know auth.uid(), never render or
+  // pull ambient data (legacy `main` or a previous user's store), and go straight to the account gate. There is no
+  // guest / local-only / "continue without account" path.
+  const authorisedForData = accountMode || !!getDeviceKey();
+  let init = { state: null };
+  if(authorisedForData){
+    init = await initStorage();          // per-user namespace (account) or the internal legacy store; migrate once, load
+    if(init.state) setState(init.state);
+    applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
+    selectedDate = parseKey(todayKey()); // canonical "today" once prefs (dayTimezone) are loaded
+    if(init.state && !enrichedIsEmpty()){
+      // Existing account on this device: show ITS OWN data immediately, then PULL+MERGE *before* the one-time
+      // routines migration. Adopting any already-migrated remote state first (it carries the migv register) makes
+      // activateRoutinesIfNeeded() a true no-op here via its idempotency guard — so two devices on the same
+      // account can never migrate independently and clobber/duplicate/re-inject each other's routines
+      // (multi-device hardening). If the pull can't complete (offline), we fall through and migrate locally;
+      // migrateGeneration() is baseline-stamped, so a later convergence still can't lose a real edit.
+      if(loadingEl) loadingEl.classList.add('hidden');
+      render();
+      try{ await syncNow(); }catch(e){}   // pull+merge+commit (adopts remote migration); offline → caught
+      await activateRoutinesIfNeeded();
+      render();
+    } else {
+      // account with no local data yet: show nothing (not the default schedule) behind the overlay until the pull resolves
+      setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: prefs, tplArchive: { since: EPOCH_KEY, versions: [] } });
+      render();
+      await runFirstLoad();
+    }
   } else {
-    // no local data: show nothing (not the default schedule) behind the overlay until we know the truth
-    setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: prefs, tplArchive: { since: EPOCH_KEY, versions: [] } });
-    render();
-    await runFirstLoad();
+    // Unauthenticated (no account session AND no device-key secret): we never opened a personal store. Keep an
+    // empty in-memory state with default (non-personal) prefs so nothing of any user ever renders, then show the
+    // full-screen account gate. No guest/offline entry — the only way into the app is Login / Create account.
+    enriched = M ? M.empty(0) : enriched; baseEnriched = M ? M.empty(0) : null; baseRevision = null; setPending(false);
+    setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: defaultPrefs(), tplArchive: { since: EPOCH_KEY, versions: [] } });
+    applyPrefs(); // theme only (default prefs — never a previous user's)
+    selectedDate = parseKey(todayKey());
+    await runFirstLoad();   // → full-screen account gate (mainView stays covered; no Today render)
   }
   updateSyncBadge();
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
