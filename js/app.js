@@ -87,7 +87,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.3.4'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  const APP_VERSION = '5.3.5'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
   // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
   // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
@@ -3022,26 +3022,44 @@
   try{ if(sb && AC()) AC().onAuthChange(sb, (s, ev)=> onAuthChanged(s, ev)); }catch(e){}
 
   const init = await initStorage();          // open IndexedDB (per-user in account mode), migrate once, load
-  if(init.state) setState(init.state);
-  applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
-  selectedDate = parseKey(todayKey()); // canonical "today" once prefs (dayTimezone) are loaded
-  if(init.state && !enrichedIsEmpty()){
-    // Existing device: show local data immediately, then PULL+MERGE *before* the one-time routines
-    // migration. Adopting any already-migrated remote state first (it carries the migv register) makes
-    // activateRoutinesIfNeeded() a true no-op here via its idempotency guard — so two devices on the same
-    // account can never migrate independently and clobber/duplicate/re-inject each other's routines
-    // (multi-device hardening). If the pull can't complete (offline), we fall through and migrate locally;
-    // migrateGeneration() is baseline-stamped, so a later convergence still can't lose a real edit.
-    if(loadingEl) loadingEl.classList.add('hidden');
-    render();
-    try{ await syncNow(); }catch(e){}   // pull+merge+commit (adopts remote migration); offline → caught
-    await activateRoutinesIfNeeded();
-    render();
+  // AUTH-FIRST (security): render/sync only when this session is authorised for the data it would show —
+  // an account session (its OWN per-user namespace) OR a device-key holder (the legacy owner's per-device
+  // secret; in production the web bundle never ships a key, so a random visitor has none). A visitor with
+  // NEITHER is unauthenticated: never load/render/pull ambient data (legacy `main` or a previous user's
+  // store), discard anything initStorage read so a later signup cannot adopt it, and go straight to the gate.
+  const authorisedForData = accountMode || !!getDeviceKey();
+  if(authorisedForData){
+    if(init.state) setState(init.state);
+    applyPrefs(); // cached prefs applied immediately so the theme doesn't flash
+    selectedDate = parseKey(todayKey()); // canonical "today" once prefs (dayTimezone) are loaded
+    if(init.state && !enrichedIsEmpty()){
+      // Existing account on this device: show ITS OWN data immediately, then PULL+MERGE *before* the one-time
+      // routines migration. Adopting any already-migrated remote state first (it carries the migv register) makes
+      // activateRoutinesIfNeeded() a true no-op here via its idempotency guard — so two devices on the same
+      // account can never migrate independently and clobber/duplicate/re-inject each other's routines
+      // (multi-device hardening). If the pull can't complete (offline), we fall through and migrate locally;
+      // migrateGeneration() is baseline-stamped, so a later convergence still can't lose a real edit.
+      if(loadingEl) loadingEl.classList.add('hidden');
+      render();
+      try{ await syncNow(); }catch(e){}   // pull+merge+commit (adopts remote migration); offline → caught
+      await activateRoutinesIfNeeded();
+      render();
+    } else {
+      // account with no local data yet: show nothing (not the default schedule) behind the overlay until the pull resolves
+      setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: prefs, tplArchive: { since: EPOCH_KEY, versions: [] } });
+      render();
+      await runFirstLoad();
+    }
   } else {
-    // no local data: show nothing (not the default schedule) behind the overlay until we know the truth
-    setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: prefs, tplArchive: { since: EPOCH_KEY, versions: [] } });
-    render();
-    await runFirstLoad();
+    // Unauthenticated (no account session AND no device-key secret). initStorage may have read the shared/default
+    // namespace into `enriched`; DISCARD it so no personal task ever renders before auth and a later signup cannot
+    // adopt someone else's data. Apply only non-personal default prefs (theme), then go straight to the full-screen
+    // auth gate. The only escape is an explicit "continue offline", which seeds its OWN fresh baseline.
+    enriched = M ? M.empty(0) : enriched; baseEnriched = M ? M.empty(0) : null; baseRevision = null; setPending(false);
+    setState({ template: M ? M.emptyTemplate() : {sat:[],sun:[],mon:[],tue:[],wed:[],thu:[],fri:[]}, logs: {}, prefs: defaultPrefs(), tplArchive: { since: EPOCH_KEY, versions: [] } });
+    applyPrefs(); // theme only (default prefs — never a previous user's)
+    selectedDate = parseKey(todayKey());
+    await runFirstLoad();   // anon → need-key/need-auth → full-screen auth gate (mainView stays covered; no Today render)
   }
   updateSyncBadge();
   startupDone = true; // enable focus/online/pageshow-triggered syncs now that first-load is settled
