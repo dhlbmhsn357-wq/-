@@ -87,7 +87,11 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.3.5'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  const APP_VERSION = '5.3.6'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  // Goals (Phase 1) feature flag — OFF for everyone by default. Enabled only where we opt in (our own device
+  // first): localStorage ayyam_ff_goals='1' or ?goals=1. The Goals data model always round-trips regardless of
+  // this flag (it only gates the UI surface), so flipping it off never loses a goal.
+  const GOALS_V1 = (function(){ try{ return localStorage.getItem('ayyam_ff_goals')==='1' || /[?&]goals=1(?:&|$)/.test(location.search); }catch(e){ return false; } })();
   // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
   // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
@@ -355,8 +359,8 @@
       .finally(()=> clearTimeout(t));
   }
   const clone = o => JSON.parse(JSON.stringify(o));
-  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion}; }
-  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; migrationDate = s.migrationDate || ''; migrationVersion = (s.migrationVersion >= 1) ? 1 : 0; }
+  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, goals, migrationDate, migrationVersion}; }
+  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; goals = s.goals || {}; migrationDate = s.migrationDate || ''; migrationVersion = (s.migrationVersion >= 1) ? 1 : 0; }
 
   // Applies a merged/adopted enriched value to the visible state and refreshes the view.
   async function adoptEnriched(en, persist){
@@ -1009,6 +1013,7 @@
   // Recurrence engine state — DORMANT in R1 (empty => runtime behaves byte-identically to today).
   // R2 will run AyyamRoutines.migrate() on load and route tasksForDate through the routines engine.
   let routines = {};
+  let goals = {}; // Phase 1 Goals — carried through state so the enriched round-trip never drops goal registers (empty until the Goals UI ships)
   let migrationDate = '';
   let migrationVersion = 0; // one-time-migration signal; persisted so migration never re-runs/re-injects
 
@@ -2004,12 +2009,14 @@
   // bottom nav can jump directly between any two screens without round-tripping through Today. No reload,
   // no app-shell rebuild: state/session/sync are untouched; only which view is visible changes.
   const BASE_SCREENS = { today:'mainView', calendar:'calendarView', routine:'routineView', progress:'reportsView', settings:'settingsView' };
+  if(GOALS_V1) BASE_SCREENS.goals = 'goalsView';   // Goals screen only exists when the flag is on
   let currentScreen = 'today';
   function renderScreen(name){
     if(name==='today') render();
     else if(name==='calendar'){ const tk=todayKey(); calYear=Number(tk.slice(0,4)); calMonth=Number(tk.slice(5,7)); renderCalWeekdays(); renderCalLegend(); renderCalendar(); track('calendar_opened'); }
     else if(name==='routine'){ renderTplDays(); renderTplTasks(); }
     else if(name==='progress'){ renderReports(); track('insights_opened'); }
+    else if(name==='goals'){ if(globalThis.AyyamGoalsUI) AyyamGoalsUI.render(); }
     else if(name==='settings'){ applyPrefs(); updateSyncKeyInfo(); updateDiagInfo(); }
   }
   function showScreen(name){
@@ -3057,6 +3064,14 @@
   authReady = true;   // from now on, real auth transitions (sign-in/out/switch) trigger a controlled reload
   try{ setupAccountUI(); }catch(e){}
   try{ setupPinToggle(); }catch(e){}
+  // Goals (Phase 1, flag-gated): wire the UI to app state + sync, and reveal its nav item. The data model
+  // always round-trips regardless; this only exposes the surface where we've opted in.
+  if(GOALS_V1 && globalThis.AyyamGoalsUI){
+    try{
+      AyyamGoalsUI.init({ getGoals:()=>goals, saveGoals:(m)=>{ goals = m || {}; saveBundle('sync'); }, now:()=>Date.now(), todayKey:()=>todayKey() });
+      const ng = $('navGoals'); if(ng) ng.classList.remove('hidden');
+    }catch(e){}
+  }
   if(accountMode){ track('app_open'); checkAdmin(); checkOnboarding(); updateGreeting(); } // P4 analytics + admin reveal + P5 onboarding + greeting
   // Settings → "إعادة الجولة التعريفية" (account users; the tour is client-side, completion stays server-side).
   if(accountMode && globalThis.AyyamOnboarding){

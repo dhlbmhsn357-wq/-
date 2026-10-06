@@ -25,6 +25,7 @@
 <script src="js/pin-lock.js"></script>
 <script src="js/time-model.js"></script>
 <script src="js/routines-model.js"></script>
+<script src="js/goals-model.js"></script>
 <script src="js/analytics-model.js"></script>
 <script src="js/adhan.umd.min.js"></script>
 <script src="js/overdue-model.js"></script>
@@ -367,6 +368,9 @@
 </div>
 
 <!-- Fixed bottom navigation (5 base screens). Hidden by JS during auth/onboarding/admin/pin/first-load. -->
+<!-- Goals (Phase 1, feature-flagged). Rendered by js/goals-ui.js. -->
+<div id="goalsView" class="hidden"></div>
+
 <nav id="bottomNav" class="bottom-nav" role="navigation" aria-label="التنقل الرئيسي">
   <button type="button" class="bnav-item" data-screen="today" aria-label="اليوم">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
@@ -384,12 +388,17 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
     <span class="bnav-label">التقدّم</span>
   </button>
+  <button type="button" class="bnav-item hidden" data-screen="goals" id="navGoals" aria-label="الأهداف">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3"/></svg>
+    <span class="bnav-label">الأهداف</span>
+  </button>
   <button type="button" class="bnav-item" data-screen="settings" aria-label="الإعدادات">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>
     <span class="bnav-label">الإعدادات</span>
   </button>
 </nav>
 
+<script src="js/goals-ui.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

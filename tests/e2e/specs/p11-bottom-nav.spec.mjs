@@ -15,7 +15,9 @@ async function toToday(page) {
 test('the bottom nav shows on Today with exactly 5 items in the right order', async ({ page }) => {
   await toToday(page);
   await expect(page.locator('#bottomNav')).toBeVisible();
-  const items = page.locator('#bottomNav .bnav-item');
+  // VISIBLE items only: the Goals nav item exists in the DOM but is hidden while goals_v1 is OFF (the default),
+  // so a normal user still sees exactly these five in this order.
+  const items = page.locator('#bottomNav .bnav-item:visible');
   await expect(items).toHaveCount(5);
   await expect(items.locator('.bnav-label')).toHaveText(['اليوم', 'التقويم', 'الروتين', 'التقدّم', 'الإعدادات']);
   // admin is NOT a nav item (item 13)

@@ -35,6 +35,12 @@
   }
   async function rpcRes(sb, fn, args) { try { var r = await sb.rpc(fn, args || {}); return r || { data: null, error: { message: 'no response' } }; } catch (e) { return { data: null, error: e }; } }
 
+  // The writer-schema this client guarantees: 3 = "Goals-safe" (preserves unknown register families in enrich(),
+  // so it never tombstones a newer feature's records). The commit RPC refuses a writer below the configured
+  // minimum when the row already holds goal:* data, which is what lets Goals launch safely. Older signatures
+  // (4 args) resolve to the server default (2); passing it explicitly is additive and backward-compatible.
+  var WRITER_SCHEMA = 3;
+
   // ---- sync backends: same shape { pull, commit }, chosen by session ----
   // v2 (authenticated): identity comes from the JWT the supabase client already attached; NO device key.
   function v2Backend(sb) {
@@ -42,7 +48,7 @@
       mode: 'account',
       pull: async () => { var r = await rpcRes(sb, 'ayyam_pull_v2', {}); if (r.error) return { status: 'error', reason: classifyRpcError(r.error) }; return r.data; },
       commit: async (expected, data, opId, reason) => {
-        var r = await rpcRes(sb, 'ayyam_commit_v2', { p_expected_revision: expected, p_data: data, p_op_id: opId, p_reason: reason });
+        var r = await rpcRes(sb, 'ayyam_commit_v2', { p_expected_revision: expected, p_data: data, p_op_id: opId, p_reason: reason, p_writer_schema: WRITER_SCHEMA });
         if (r.error) return { status: 'error', reason: classifyRpcError(r.error) };
         return r.data;
       },
