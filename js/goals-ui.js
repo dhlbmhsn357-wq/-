@@ -19,7 +19,10 @@
 
   var PERIOD_TAB = { weekly: 'الأسبوع', monthly: 'الشهر', quarterly: 'الربع' };
   var PERIOD_PICK = { weekly: 'هذا الأسبوع', monthly: 'هذا الشهر', quarterly: 'هذا الربع' };
-  var MEASURE = { count: 'عدد مرات', quantity: 'كمية', percentage: 'نسبة مئوية', milestones: 'مراحل', linked_activity: 'نشاط مرتبط' };
+  var MEASURE = { count: 'عدد مرات', quantity: 'كمية', percentage: 'نسبة مئوية', milestones: 'مراحل', linked_activity: 'نشاط مرتبط' }; // full map for labels
+  // V1 deliberately offers only these four in the create/edit picker. linked_activity stays reserved in the
+  // schema/engine (zero added complexity) but is NOT selectable until the task/routine linking lands post-V1.
+  var MEASURE_PICK = { count: 'عدد مرات', quantity: 'كمية', percentage: 'نسبة مئوية', milestones: 'مراحل' };
   var AREA = { worship: 'عبادة', study: 'دراسة', work: 'عمل', health: 'صحة', finance: 'مال', family: 'أسرة', personal: 'شخصي', custom: 'أخرى' };
   var PACE = { on_track: 'يسير جيدًا', at_risk: 'يحتاج انتباهًا', behind: 'متأخر عن الخطة', completed: 'مكتمل', paused: 'متوقف مؤقتًا', archived: 'مؤرشف', not_started: 'لم يبدأ' };
   var PACE_CLASS = { on_track: 'ok', at_risk: 'warn', behind: 'bad', completed: 'done', paused: 'muted', archived: 'muted', not_started: 'muted' };
@@ -183,7 +186,7 @@
 
     // 3) measurement
     var fMeasure = field('طريقة القياس');
-    fMeasure.appendChild(seg('goal-seg-measure', MEASURE, draftMeasure, function (k) { draftMeasure = k; syncMeasureUI(sheet); }));
+    fMeasure.appendChild(seg('goal-seg-measure', MEASURE_PICK, draftMeasure, function (k) { draftMeasure = k; syncMeasureUI(sheet); }));
     sheet.appendChild(fMeasure);
 
     // 4) target (+ unit shortcut for quantity shown inline in advanced; here just the number)

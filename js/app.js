@@ -87,7 +87,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.3.5'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  const APP_VERSION = '5.3.6'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
   // Goals (Phase 1) feature flag — OFF for everyone by default. Enabled only where we opt in (our own device
   // first): localStorage ayyam_ff_goals='1' or ?goals=1. The Goals data model always round-trips regardless of
   // this flag (it only gates the UI surface), so flipping it off never loses a goal.
