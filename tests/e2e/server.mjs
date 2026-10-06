@@ -54,7 +54,8 @@ const RPC = {
   register_push: ['p_key', 'p_endpoint', 'p_p256dh', 'p_auth'],
   // P2 authenticated (v2) RPCs — identity comes from the JWT (token), not a param.
   ayyam_pull_v2: [],
-  ayyam_commit_v2: ['p_expected_revision', 'p_data', 'p_op_id', 'p_reason'],
+  ayyam_commit_v2: ['p_expected_revision', 'p_data', 'p_op_id', 'p_reason', 'p_writer_schema'],
+  ayyam_goals_enabled: [],
   ayyam_list_snapshots_v2: [],
   ayyam_restore_v2: ['p_snapshot_id', 'p_expected_revision', 'p_op_id'],
   register_push_v2: ['p_endpoint', 'p_p256dh', 'p_auth'],
@@ -173,7 +174,17 @@ const server = http.createServer(async (req, res) => {
       try { await db.query("insert into public.user_roles (user_id, role) values ($1,'admin') on conflict (user_id) do update set role='admin'", [u.id]); }
       finally { await db.exec('reset role'); }
       send(res, 200, { ok: true, uid: u.id }); }); }
+  if (p === '/__ctl/goals-pilot') { const email = url.searchParams.get('email') || '';
+    const u = authUsers.get(email); if (!u) return send(res, 404, { error: 'no such user' });
+    return tx(async () => { await db.exec('set role service_role');
+      try { await db.query('insert into public.ayyam_goals_pilot (user_id) values ($1) on conflict do nothing', [u.id]); }
+      finally { await db.exec('reset role'); }
+      send(res, 200, { ok: true, uid: u.id }); }); }
   if (p === '/__ctl/sw-version') { swVersion = url.searchParams.get('v') || null; swBreak = url.searchParams.get('break') === '1'; return send(res, 200, { swVersion, swBreak }); }
+  if (p === '/__ctl/account-row') return tx(async () => { // the single account (u:*) row, for account-mode sync assertions
+    const row = (await db.query(`select id, revision, epoch, data from public.ayyam_data where id like 'u:%' order by updated_at desc limit 1`)).rows[0] || null;
+    send(res, 200, { row });
+  });
   if (p === '/__ctl/db') return tx(async () => {
     const main = (await db.query(`select revision, epoch, data from public.ayyam_data where id='main'`)).rows[0] || null;
     const subs = (await db.query(`select endpoint, disabled_at, p256dh, auth from public.push_subscriptions order by created_at`)).rows;

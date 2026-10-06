@@ -20,23 +20,30 @@ async function commitAs(db, uid, { expected, data, opId = randomUUID(), reason =
     [expected, JSON.stringify(data), opId, reason, writerSchema])).rows[0].r;
 }
 const rowOf = async (db, uid) => (await asUser(db, uid, 'select revision, data from public.ayyam_data where id = $1', ['u:' + uid])).rows[0];
+// Stage B: writing a goal:* register now requires pilot-allowlist membership. These writer_schema-gate tests
+// seed goal rows, so they enroll their user first (the gate itself is orthogonal to the pilot allowlist).
+async function addPilot(db, uid) {
+  await db.query('set role service_role');
+  try { await db.query('insert into public.ayyam_goals_pilot (user_id) values ($1) on conflict do nothing', [uid]); }
+  finally { await db.exec('reset role'); }
+}
 
 test('1+8. OLD writer (4-arg signature) + no goals on the row → commit succeeds', async () => {
-  const db = await freshDb(); const uid = await createUser(db);
+  const db = await freshDb(); const uid = await createUser(db); await addPilot(db, uid);
   const r = await commitAs(db, uid, { expected: 0, data: enriched(PLAIN) }); // 4-arg → server default schema 2
   assert.equal(r.status, 'ok');
   assert.equal(r.revision, 1);
 });
 
 test('2. NEW writer (schema 3) + no goals → commit succeeds', async () => {
-  const db = await freshDb(); const uid = await createUser(db);
+  const db = await freshDb(); const uid = await createUser(db); await addPilot(db, uid);
   const r = await commitAs(db, uid, { expected: 0, data: enriched(PLAIN), writerSchema: 3 });
   assert.equal(r.status, 'ok');
   assert.equal(r.revision, 1);
 });
 
 test('3+5. OLD writer + the row already holds a goal → rejected (client_too_old), revision/data unchanged', async () => {
-  const db = await freshDb(); const uid = await createUser(db);
+  const db = await freshDb(); const uid = await createUser(db); await addPilot(db, uid);
   const created = await commitAs(db, uid, { expected: 0, data: enriched(WITH_GOAL), writerSchema: 3 }); // goals client creates the goal
   assert.equal(created.status, 'ok'); assert.equal(created.revision, 1);
 
@@ -52,7 +59,7 @@ test('3+5. OLD writer + the row already holds a goal → rejected (client_too_ol
 });
 
 test('4. NEW writer (schema 3) + existing goal → commit succeeds', async () => {
-  const db = await freshDb(); const uid = await createUser(db);
+  const db = await freshDb(); const uid = await createUser(db); await addPilot(db, uid);
   await commitAs(db, uid, { expected: 0, data: enriched(WITH_GOAL), writerSchema: 3 });
   const r = await commitAs(db, uid, { expected: 1, data: enriched({ ...WITH_GOAL, 'goal:g1': { val: { id: 'g1', title: 'هدف', period_type: 'weekly', measurement_type: 'count', target_value: 12, current_value: 5, status: 'on_track' }, t: 2, by: 'dev' } }), writerSchema: 3 });
   assert.equal(r.status, 'ok');
@@ -60,7 +67,7 @@ test('4. NEW writer (schema 3) + existing goal → commit succeeds', async () =>
 });
 
 test('6. idempotency/retries: a duplicate op is replayed safely; a rejected op leaves no state', async () => {
-  const db = await freshDb(); const uid = await createUser(db);
+  const db = await freshDb(); const uid = await createUser(db); await addPilot(db, uid);
   await commitAs(db, uid, { expected: 0, data: enriched(WITH_GOAL), writerSchema: 3 }); // rev1, has goal
 
   // new writer applies op X once → ok; retry op X → duplicate (NOT applied twice)

@@ -1,20 +1,39 @@
 import { test, expect } from '@playwright/test';
-import { prepare, resetBackend, waitSynced } from '../helpers.mjs';
+import { prepare, resetBackend, skipOnboarding } from '../helpers.mjs';
 
-// P1-C — Goals UI (flag-gated). Create → update progress → complete → edit → archive → delete, plus a
-// milestones goal and reload-persistence. Entered in legacy device-key mode (simplest harness); the UI is
-// identical in account mode. The flag is turned on via localStorage before the app boots.
+// Goals UI — Private Pilot (Stage B). Enablement is SERVER-authoritative: an account sees Goals only when it is
+// on the server allowlist (ayyam_goals_pilot → ayyam_goals_enabled RPC). No localStorage/query path. These tests
+// sign up a real account, authorize it via /__ctl/goals-pilot, reload, then drive the UI.
 test.beforeEach(async ({ request }) => { await resetBackend(request); });
 test.describe.configure({ retries: 2, timeout: 90000 });
 
-async function openGoals(page) {
-  await prepare(page, { key: true });
-  await page.addInitScript(() => { try { localStorage.setItem('ayyam_ff_goals', '1'); } catch (e) {} });
+async function signup(page, email) {
+  await prepare(page, { key: false, now: '2026-09-28T09:00:00' });
   await page.goto('/');
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('#navGoals')).toBeVisible();
+  await expect(page.locator('#authView')).toBeVisible({ timeout: 15000 });
+  await page.locator('#authName').fill('مالك');
+  await page.locator('#authEmail').fill(email);
+  await page.locator('#authPass').fill('pass1234');
+  await page.locator('#authSubmit').click();
+  await expect(page.locator('#onbView')).toBeVisible({ timeout: 25000 });
+  await skipOnboarding(page);
+  await expect(page.locator('#mainView')).toBeVisible();
+}
+
+// After an account-mode reload, the onboarding tour can re-appear and overlay the nav; dismiss it, then go to Goals.
+async function reloadToGoals(page) {
+  await page.reload();
+  await expect(page.locator('#mainView')).toBeVisible({ timeout: 15000 });
+  await skipOnboarding(page);
+  await expect(page.locator('#navGoals')).toBeVisible({ timeout: 15000 });
   await page.locator('#navGoals').click();
   await expect(page.locator('#goalsView')).toBeVisible();
+}
+
+async function openGoals(page, email = 'pilot@t.test') {
+  await signup(page, email);
+  await page.request.post('/__ctl/goals-pilot?email=' + encodeURIComponent(email)); // allowlist this account
+  await reloadToGoals(page);                                                         // server flag now turns Goals on
 }
 
 async function createGoal(page, { name, period = null, measure = null, target = null }) {
@@ -79,15 +98,32 @@ test('archive removes it from the list; delete (confirmed) removes it too', asyn
   await expect(page.locator('.goal-card', { hasText: 'هدف الحذف' })).toHaveCount(0);
 });
 
-test('a goal survives a reload (persisted + synced)', async ({ page }) => {
+test('a goal survives a reload (persisted in the account namespace + synced to the account row)', async ({ page }) => {
   await openGoals(page);
   await createGoal(page, { name: 'هدف يبقى', measure: 'عدد مرات', target: 10 });
-  await waitSynced(page);
-  await page.reload();
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 15000 });
-  await page.locator('#navGoals').click();
+  // wait for the commit to land on the account row (so the local persist has flushed) before reloading
+  await expect.poll(async () => {
+    const r = await (await page.request.get('/__ctl/account-row')).json();
+    return r.row ? JSON.stringify(r.row.data).includes('هدف يبقى') : false;
+  }, { timeout: 15000 }).toBe(true);
+  await reloadToGoals(page);
   await expect(page.locator('.goal-card', { hasText: 'هدف يبقى' })).toBeVisible();
 });
+
+// ---------------- Stage B: server-authoritative enablement + backend write-guard ----------------
+test('an account NOT on the allowlist never sees Goals (no nav item, no screen)', async ({ page }) => {
+  await signup(page, 'nopilot@t.test'); // signed in, but NOT authorized
+  await expect(page.locator('#mainView')).toBeVisible();
+  await expect(page.locator('#navGoals')).toBeHidden();                 // the nav item stays hidden
+  await expect(page.locator('#bottomNav .bnav-item:visible')).toHaveCount(5);
+  // even forcing the localStorage/query flag does NOT reveal it (server is the only authority)
+  await page.evaluate(() => { try { localStorage.setItem('ayyam_ff_goals', '1'); } catch (e) {} });
+  await page.goto('/?goals=1');
+  await expect(page.locator('#mainView')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#navGoals')).toBeHidden();
+});
+// (the backend write-guard — a non-allowlisted account refused a direct goal:* write — is proven in
+//  tests/db/goals-pilot.test.mjs, exercising ayyam_commit_v2 at the SQL/RLS layer.)
 
 // ---------------- P1-D: period tabs ----------------
 async function selectTab(page, label) {
@@ -161,9 +197,7 @@ test('archived goals leave the main list and live under السابقة والم�
 test('the selected tab persists across a reload', async ({ page }) => {
   await openGoals(page);
   await selectTab(page, 'الشهر');
-  await page.reload();
-  await expect(page.locator('.task').first()).toBeVisible({ timeout: 15000 });
-  await page.locator('#navGoals').click();
+  await reloadToGoals(page);
   await expect(page.locator('.goal-tab.on', { hasText: 'الشهر' })).toBeVisible();
 });
 
