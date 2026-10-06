@@ -88,6 +88,63 @@
       order: Number.isFinite(raw.order) ? raw.order : 0, rec };
   }
   function cleanRoutines(map) { const out = {}; if (isObj(map)) for (const k of Object.keys(map)) { const r = cleanRoutine(map[k], k); if (r) out[r.id] = r; } return out; }
+
+  // ---------- Goals (Phase 1). A goal is ONE whole-object leaf register `goal:<id>` (exactly like a routine
+  // `r:<id>`), so it rides the existing LWW + tombstone + epoch sync with ZERO new machinery. milestones and
+  // links live INSIDE the goal object in V1 — no separate record families. Everything is empty by default, so
+  // existing users upgrade to goals:{} with no migration and no data loss. The richer domain constants and the
+  // period/progress math live in js/goals-model.js; THIS is the serialization gate (what persists + round-trips).
+  const GOAL_PERIODS = new Set(['weekly', 'monthly', 'quarterly']);
+  const GOAL_AREAS = new Set(['worship', 'study', 'work', 'health', 'finance', 'family', 'personal', 'custom']);
+  const GOAL_MEASURES = new Set(['count', 'quantity', 'percentage', 'milestones', 'linked_activity']);
+  const GOAL_STATUSES = new Set(['not_started', 'on_track', 'at_risk', 'behind', 'completed', 'paused', 'archived']);
+  const GOAL_LINK_TYPES = new Set(['task', 'routine', 'milestone']);
+  const gStr = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
+  const gNum = (v, def) => (Number.isFinite(v) ? v : def);
+  const gTs = (v) => (Number.isFinite(v) ? v : null);
+  function cleanMilestone(v, i) {
+    if (!isObj(v)) return null;
+    const id = (typeof v.id === 'string' && v.id) ? v.id : '';
+    if (!id) return null;
+    const completed = v.completed === true;
+    return { id, label: gStr(v.label, 200), order: gNum(v.order, i), completed, completed_at: completed ? gTs(v.completed_at) : null };
+  }
+  function cleanGoalLink(v) {
+    if (!isObj(v)) return null;
+    const id = (typeof v.id === 'string' && v.id) ? v.id : '';
+    const linked_id = (typeof v.linked_id === 'string' && v.linked_id) ? v.linked_id : '';
+    if (!id || !GOAL_LINK_TYPES.has(v.link_type) || !linked_id) return null;
+    return { id, link_type: v.link_type, linked_id, created_at: gNum(v.created_at, 0) };
+  }
+  function cleanGoal(raw, id) {
+    if (!isObj(raw)) return null;
+    const gid = (typeof raw.id === 'string' && raw.id) ? raw.id : (typeof id === 'string' ? id : '');
+    if (!gid) return null;
+    return {
+      id: gid,
+      title: gStr(raw.title, 200),
+      description: gStr(raw.description, 2000),
+      why: gStr(raw.why, 2000),
+      period_type: GOAL_PERIODS.has(raw.period_type) ? raw.period_type : 'weekly',
+      start_date: DATE_KEY_RE.test(raw.start_date) ? raw.start_date : '',
+      end_date: DATE_KEY_RE.test(raw.end_date) ? raw.end_date : '',
+      area: GOAL_AREAS.has(raw.area) ? raw.area : null,
+      measurement_type: GOAL_MEASURES.has(raw.measurement_type) ? raw.measurement_type : 'count',
+      target_value: gNum(raw.target_value, 0),
+      current_value: gNum(raw.current_value, 0),
+      unit: (typeof raw.unit === 'string' && raw.unit) ? raw.unit.slice(0, 24) : null,
+      status: GOAL_STATUSES.has(raw.status) ? raw.status : 'not_started',
+      parent_goal_id: (typeof raw.parent_goal_id === 'string' && raw.parent_goal_id) ? raw.parent_goal_id : null,
+      milestones: Array.isArray(raw.milestones) ? raw.milestones.map(cleanMilestone).filter(Boolean) : [],
+      links: Array.isArray(raw.links) ? raw.links.map(cleanGoalLink).filter(Boolean) : [],
+      created_at: gNum(raw.created_at, 0),
+      updated_at: gNum(raw.updated_at, 0),
+      completed_at: gTs(raw.completed_at),
+      archived_at: gTs(raw.archived_at),
+    };
+  }
+  function cleanGoals(map) { const out = {}; if (isObj(map)) for (const k of Object.keys(map)) { const g = cleanGoal(map[k], k); if (g) out[g.id] = g; } return out; }
+
   function emptyTemplate() { const t = {}; DAY_CODES.forEach((c) => (t[c] = [])); return t; }
 
   function cleanLocation(l) {
@@ -119,9 +176,10 @@
       versions: Array.isArray(a.versions) ? a.versions.filter((v) => isObj(v) && typeof v.id === 'string' && DATE_KEY_RE.test(v.id))
         .map((v) => ({ id: v.id, template: (function () { const t = {}; DAY_CODES.forEach((c) => (t[c] = cleanList(isObj(v.template) ? v.template[c] : null).map(strip))); return t; })() })) : [] };
     const routines = cleanRoutines(src.routines);
+    const goals = cleanGoals(src.goals); // Phase 1 — empty {} for every existing user (additive, no migration)
     const migrationDate = DATE_KEY_RE.test(src.migrationDate) ? src.migrationDate : '';
     const migrationVersion = (typeof src.migrationVersion === 'number' && src.migrationVersion >= 1) ? 1 : 0;
-    return { template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion };
+    return { template, logs, prefs, tplArchive, routines, goals, migrationDate, migrationVersion };
   }
   const strip = (t) => ({ id: t.id, title: t.title, time: t.time, timeValue: t.timeValue || null, period: t.period }); // drop _order for archive equality
 
@@ -145,6 +203,8 @@
     out['arch'] = mat.tplArchive;
     // routine segments (r:<id>, whole-object leaf) + migration fence date (migd). Empty by default.
     for (const id of Object.keys(mat.routines || {})) out[`r:${id}`] = mat.routines[id];
+    // goals (goal:<id>, whole-object leaf — milestones/links inside). Empty by default (Phase 1).
+    for (const id of Object.keys(mat.goals || {})) out[`goal:${id}`] = mat.goals[id];
     if (mat.migrationDate) out['migd'] = mat.migrationDate;
     // migrationVersion register (migv): persists the one-time-migration signal so a reload/pull never re-derives
     // routines from the retained legacy template. Without this the migration could silently re-run.
@@ -155,6 +215,14 @@
   // Booleans (done/hide) are flags: a flip to false is a stamped register (val:false), not a tombstone.
   const isFlagKey = (k) => k.startsWith('p:bgOn') || /:done:|:hide:/.test(k);
   const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  // Keys that THIS version's flatten() can produce. A register whose key is NOT one of these was written by a
+  // NEWER app version this one doesn't understand — enrich() must PRESERVE it (never tombstone it on a diff), so
+  // an older/lagging device can't silently delete a newer feature's data. This forward-compatibility guard is
+  // what lets Goals (and any future register family) ship safely into a fleet that updates gradually.
+  const MANAGED_EXACT = new Set(['arch', 'migd', 'migv']);
+  const MANAGED_PREFIXES = ['p:', 'g:', 'm:', 'r:', 'goal:'];
+  const isManagedKey = (k) => MANAGED_EXACT.has(k) || MANAGED_PREFIXES.some((p) => k.startsWith(p));
 
   // Effective live value of a key in an enriched value (tombstone with >= stamp means "gone/false").
   function liveVal(en, key) {
@@ -187,6 +255,7 @@
     for (const key of prevKeys) {
       if (newKeys.has(key)) continue;
       if (liveVal(en, key) === undefined) continue; // already gone
+      if (!isManagedKey(key)) continue; // forward-compat: this version doesn't manage this key → preserve it, never delete
       if (isFlagKey(key)) { en.reg[key] = { val: false, t: now, by: by || '' }; } // flip flag to false (stamped)
       else { en.tomb[key] = stamp; delete en.reg[key]; }
     }
@@ -195,7 +264,7 @@
 
   // ---------- materialize: enriched → bundle the app renders ----------
   function materialize(en) {
-    const mat = { template: emptyTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: '0000-00-00', versions: [] }, routines: {}, migrationDate: '', migrationVersion: 0 };
+    const mat = { template: emptyTemplate(), logs: {}, prefs: defaultPrefs(), tplArchive: { since: '0000-00-00', versions: [] }, routines: {}, goals: {}, migrationDate: '', migrationVersion: 0 };
     const ensureDay = (d) => (mat.logs[d] || (mat.logs[d] = { done: {}, extra: [], hidden: {}, overrides: {}, excused: {}, replacements: {} }));
     const extras = {}; // day -> [{order, task}]
     const tpl = {};    // dayCode -> [{order, task}]
@@ -207,6 +276,7 @@
       if (key === 'migd') { mat.migrationDate = val; continue; }
       if (key === 'migv') { mat.migrationVersion = val; continue; }
       if (key.startsWith('r:')) { mat.routines[key.slice(2)] = val; continue; }
+      if (key.startsWith('goal:')) { mat.goals[key.slice(5)] = val; continue; }
       const parts = key.split(':');
       if (parts[0] === 'g') {
         const [, day, kind, id] = parts;

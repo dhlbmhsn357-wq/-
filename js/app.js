@@ -355,8 +355,8 @@
       .finally(()=> clearTimeout(t));
   }
   const clone = o => JSON.parse(JSON.stringify(o));
-  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion}; }
-  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; migrationDate = s.migrationDate || ''; migrationVersion = (s.migrationVersion >= 1) ? 1 : 0; }
+  function currentBundle(){ return {template, logs, prefs, tplArchive, routines, goals, migrationDate, migrationVersion}; }
+  function setState(s){ template = s.template; logs = s.logs; prefs = s.prefs; tplArchive = s.tplArchive; routines = s.routines || {}; goals = s.goals || {}; migrationDate = s.migrationDate || ''; migrationVersion = (s.migrationVersion >= 1) ? 1 : 0; }
 
   // Applies a merged/adopted enriched value to the visible state and refreshes the view.
   async function adoptEnriched(en, persist){
@@ -1009,6 +1009,7 @@
   // Recurrence engine state — DORMANT in R1 (empty => runtime behaves byte-identically to today).
   // R2 will run AyyamRoutines.migrate() on load and route tasksForDate through the routines engine.
   let routines = {};
+  let goals = {}; // Phase 1 Goals — carried through state so the enriched round-trip never drops goal registers (empty until the Goals UI ships)
   let migrationDate = '';
   let migrationVersion = 0; // one-time-migration signal; persisted so migration never re-runs/re-injects
 
