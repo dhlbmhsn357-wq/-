@@ -68,5 +68,72 @@
     };
   }
 
-  global.AyyamGoals = { PERIOD_TYPES, AREAS, MEASUREMENT_TYPES, STATUSES, periodBounds, firstOfMonth, newGoal };
+  // ---------- P1-B: Progress Engine + Pace Engine (pure, deterministic, no AI, no forecasting) ----------
+  const clampPct = (v) => (Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0);
+
+  // Pace tolerances — defined here, in ONE place, on purpose. pace compares how far along the goal is vs how
+  // far along its time window is. Percentage-point based (not per-day) so a single day never flips the verdict,
+  // and MIN_ELAPSED_PCT suppresses any verdict until enough of the window has passed (no day-1 false alarms).
+  const PACE = {
+    ON_TRACK_TOL: 5,     // progress may trail elapsed by up to 5 points and still count as on track
+    AT_RISK_TOL: 20,     // trailing by up to 20 points = at risk; beyond that = behind
+    MIN_ELAPSED_PCT: 15, // below this much of the window elapsed, we don't judge yet (always on track)
+  };
+
+  // progress(goal, opts) → { pct, current, target }. opts.linkedValue supplies the externally-derived current
+  // for a linked_activity goal (computed from the bundle in P1-E); absent → falls back to the goal's own value.
+  function progress(goal, opts) {
+    const g = (goal && typeof goal === 'object') ? goal : {};
+    const o = opts || {};
+    const mt = g.measurement_type;
+    if (mt === 'milestones') {
+      const ms = Array.isArray(g.milestones) ? g.milestones : [];
+      const total = ms.length;
+      const current = ms.filter((m) => m && m.completed === true).length;
+      return { pct: total > 0 ? clampPct((current / total) * 100) : 0, current, target: total };
+    }
+    if (mt === 'percentage') {
+      const current = Number.isFinite(g.current_value) ? g.current_value : 0;
+      return { pct: clampPct(current), current, target: 100 };
+    }
+    // count | quantity | linked_activity → current / target
+    const target = Number.isFinite(g.target_value) ? g.target_value : 0;
+    let current;
+    if (mt === 'linked_activity') current = Number.isFinite(o.linkedValue) ? o.linkedValue : (Number.isFinite(g.current_value) ? g.current_value : 0);
+    else current = Number.isFinite(g.current_value) ? g.current_value : 0;
+    return { pct: target > 0 ? clampPct((current / target) * 100) : 0, current, target };
+  }
+
+  // How far through its time window the goal is, 0–100. Inclusive days: the start day is day 1, the end day is 100%.
+  function timeElapsedPct(goal, todayKey) {
+    const g = goal || {};
+    if (!T || !T.isKey(g.start_date) || !T.isKey(g.end_date) || !T.isKey(todayKey)) return 0;
+    const total = T.diffDays(g.end_date, g.start_date) + 1;
+    if (total <= 0) return 0;
+    const elapsed = T.diffDays(todayKey, g.start_date) + 1;
+    return clampPct((elapsed / total) * 100);
+  }
+
+  // The health verdict. Terminal goal states short-circuit; completion is detected from progress; otherwise we
+  // compare progress to elapsed time with the tolerances above (and never judge before MIN_ELAPSED_PCT).
+  function paceStatus(progressPct, elapsedPct, goal) {
+    const g = goal || {};
+    if (g.status === 'paused') return 'paused';
+    if (g.status === 'archived') return 'archived';
+    if (progressPct >= 100) return 'completed';
+    if (elapsedPct < PACE.MIN_ELAPSED_PCT) return 'on_track'; // too early to judge → no false alarms
+    const gap = progressPct - elapsedPct;
+    if (gap >= -PACE.ON_TRACK_TOL) return 'on_track';
+    if (gap >= -PACE.AT_RISK_TOL) return 'at_risk';
+    return 'behind';
+  }
+
+  // Convenience: everything the UI needs for a goal card, in one deterministic call.
+  function evaluate(goal, todayKey, opts) {
+    const pr = progress(goal, opts);
+    const elapsed = timeElapsedPct(goal, todayKey);
+    return { progress_pct: pr.pct, current: pr.current, target: pr.target, time_elapsed_pct: elapsed, pace_status: paceStatus(pr.pct, elapsed, goal) };
+  }
+
+  global.AyyamGoals = { PERIOD_TYPES, AREAS, MEASUREMENT_TYPES, STATUSES, PACE, periodBounds, firstOfMonth, newGoal, progress, timeElapsedPct, paceStatus, evaluate };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
