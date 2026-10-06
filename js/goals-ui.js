@@ -45,7 +45,21 @@
     return d;
   }
 
-  // ---------------- list (P1-C: a simple non-archived list; the week/month/quarter tabs come in P1-D) ----------
+  // ---------------- list with period tabs (P1-D) ----------------
+  // One screen, three plain tabs (week / month / quarter). Each shows ONLY that period's CURRENT goals by
+  // default (window contains today). Past windows and archived goals move to a collapsed secondary section, so
+  // the main view never fills with history. The chosen tab is remembered; default is the week.
+  var TAB_LABEL = { weekly: 'الأسبوع', monthly: 'الشهر', quarterly: 'الربع' };
+  var EMPTY_MSG = { weekly: 'حدّد ما تريد تحقيقه هذا الأسبوع', monthly: 'ما النتيجة التي تريد الوصول إليها هذا الشهر؟', quarterly: 'ما الذي تريد تغييره خلال الـ٩٠ يومًا القادمة؟' };
+  var selectedTab = (function () { try { var t = localStorage.getItem('ayyam_goals_tab'); return (t === 'weekly' || t === 'monthly' || t === 'quarterly') ? t : 'weekly'; } catch (e) { return 'weekly'; } })();
+  var showPast = false;
+
+  function setTab(t) { selectedTab = t; showPast = false; try { localStorage.setItem('ayyam_goals_tab', t); } catch (e) {} render(); }
+  function inCurrentPeriod(g) {
+    var T = global.AyyamTime; if (!T || !T.isKey(g.start_date) || !T.isKey(g.end_date)) return true;
+    var tk = todayKey(); return T.cmpKey(g.start_date, tk) <= 0 && T.cmpKey(tk, g.end_date) <= 0;
+  }
+
   function render() {
     var root = $('goalsView'); if (!root) return;
     root.innerHTML = '';
@@ -56,22 +70,46 @@
     head.appendChild(add);
     root.appendChild(head);
 
-    var wrap = elc('div', 'goals-wrap');
-    var all = goalsList();
-    var ids = Object.keys(all).filter(function (id) { return all[id] && all[id].status !== 'archived'; });
-    ids.sort(function (a, b) { return (all[b].updated_at || 0) - (all[a].updated_at || 0); });
+    // plain period tabs
+    var tabs = elc('div', 'goal-tabs');
+    ['weekly', 'monthly', 'quarterly'].forEach(function (t) {
+      var b = elc('button', 'goal-tab' + (t === selectedTab ? ' on' : ''), TAB_LABEL[t]);
+      b.setAttribute('data-tab', t); b.addEventListener('click', function () { setTab(t); });
+      tabs.appendChild(b);
+    });
+    root.appendChild(tabs);
 
-    if (!ids.length) {
+    // split this tab's goals into current vs past/archived
+    var all = goalsList(); var current = [], past = [];
+    Object.keys(all).forEach(function (id) {
+      var g = all[id]; if (!g || g.period_type !== selectedTab) return;
+      if (g.status === 'archived') { past.push(g); return; }   // archived never fills the main view
+      if (inCurrentPeriod(g)) current.push(g); else past.push(g); // completed stays in its period; ended windows move to past
+    });
+    var byUpdated = function (a, b) { return (b.updated_at || 0) - (a.updated_at || 0); };
+    current.sort(byUpdated); past.sort(byUpdated);
+
+    var wrap = elc('div', 'goals-wrap');
+    if (!current.length) {
       var empty = elc('div', 'goals-empty');
-      empty.appendChild(elc('div', 'goals-empty-title', 'حدّد ما تريد تحقيقه'));
-      empty.appendChild(elc('div', 'goals-empty-sub', 'هدف واحد واضح يكفي لتبدأ — أسبوعي أو شهري أو ربع سنوي.'));
+      empty.appendChild(elc('div', 'goals-empty-title', EMPTY_MSG[selectedTab]));
       var cta = elc('button', 'btn primary', 'أنشئ أول هدف'); cta.addEventListener('click', function () { openSheet(null); });
       empty.appendChild(cta);
       wrap.appendChild(empty);
     } else {
-      ids.forEach(function (id) { wrap.appendChild(card(all[id])); });
+      current.forEach(function (g) { wrap.appendChild(card(g)); });
     }
     root.appendChild(wrap);
+
+    // secondary, collapsed: past windows + archived (out of the main view)
+    if (past.length) {
+      var sec = elc('div', 'goals-past');
+      var toggle = elc('button', 'goals-past-toggle', (showPast ? 'إخفاء' : 'عرض') + ' السابقة والمؤرشفة (' + past.length + ')');
+      toggle.addEventListener('click', function () { showPast = !showPast; render(); });
+      sec.appendChild(toggle);
+      if (showPast) { var pw = elc('div', 'goals-wrap goals-wrap-past'); past.forEach(function (g) { pw.appendChild(card(g)); }); sec.appendChild(pw); }
+      root.appendChild(sec);
+    }
   }
 
   function card(g) {
@@ -128,7 +166,7 @@
     editingId = id; showAdvanced = false;
     var existing = id ? goalsList()[id] : null;
     draftMeasure = existing ? existing.measurement_type : 'count';
-    draftPeriod = existing ? existing.period_type : 'weekly';
+    draftPeriod = existing ? existing.period_type : selectedTab; // a new goal defaults to the tab you're on
     var ov = overlay('goalSheetOverlay'); ov.innerHTML = '';
     var sheet = elc('div', 'sheet goal-sheet'); sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-modal', 'true');
     sheet.appendChild(elc('h2', null, id ? 'تعديل الهدف' : 'هدف جديد'));
@@ -251,8 +289,11 @@
         var byLabel = {}; (prev.milestones || []).forEach(function (m) { byLabel[m.label] = m; });
         milestones = milestones.map(function (m) { var old = byLabel[m.label]; return old ? Object.assign({}, m, { id: old.id, completed: old.completed, completed_at: old.completed_at }) : m; });
       }
+      // if the period type changed on edit, recompute the window so the goal lands in the right tab's CURRENT period.
+      var win = (period !== prev.period_type) ? GM().periodBounds(period, todayKey()) : { start_date: prev.start_date, end_date: prev.end_date };
       all[editingId] = Object.assign({}, prev, {
         title: name, period_type: period, measurement_type: measure, target_value: target,
+        start_date: win.start_date, end_date: win.end_date,
         unit: unit || null, area: area || null, why: why || '', parent_goal_id: parent || null,
         milestones: measure === 'milestones' ? milestones : [], updated_at: now,
       });
@@ -360,5 +401,5 @@
     closeOverlay('goalDetailOverlay'); render();
   }
 
-  global.AyyamGoalsUI = { init: init, render: render, openCreate: function () { openSheet(null); } };
+  global.AyyamGoalsUI = { init: init, render: render, openCreate: function () { openSheet(null); }, _peek: function () { return goalsList(); } };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

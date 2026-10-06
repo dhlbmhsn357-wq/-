@@ -89,6 +89,94 @@ test('a goal survives a reload (persisted + synced)', async ({ page }) => {
   await expect(page.locator('.goal-card', { hasText: 'هدف يبقى' })).toBeVisible();
 });
 
+// ---------------- P1-D: period tabs ----------------
+async function selectTab(page, label) {
+  await page.locator('.goal-tab', { hasText: label }).click();
+  await expect(page.locator('.goal-tab.on', { hasText: label })).toBeVisible();
+}
+async function makeThree(page) {
+  await createGoal(page, { name: 'هدف الأسبوع', period: 'هذا الأسبوع', measure: 'عدد مرات', target: 5 });
+  await createGoal(page, { name: 'هدف الشهر', period: 'هذا الشهر', measure: 'عدد مرات', target: 5 });
+  await createGoal(page, { name: 'هدف الربع', period: 'هذا الربع', measure: 'عدد مرات', target: 5 });
+}
+
+test('each goal appears ONLY in its own period tab', async ({ page }) => {
+  await openGoals(page);
+  await makeThree(page);
+  await selectTab(page, 'الأسبوع');
+  await expect(page.locator('.goals-wrap .goal-card', { hasText: 'هدف الأسبوع' })).toBeVisible();
+  await expect(page.locator('.goals-wrap .goal-card', { hasText: 'هدف الشهر' })).toHaveCount(0);
+  await expect(page.locator('.goals-wrap .goal-card', { hasText: 'هدف الربع' })).toHaveCount(0);
+  await selectTab(page, 'الشهر');
+  await expect(page.locator('.goals-wrap .goal-card', { hasText: 'هدف الشهر' })).toBeVisible();
+  await expect(page.locator('.goals-wrap .goal-card', { hasText: 'هدف الأسبوع' })).toHaveCount(0);
+  await selectTab(page, 'الربع');
+  await expect(page.locator('.goals-wrap .goal-card', { hasText: 'هدف الربع' })).toBeVisible();
+  await expect(page.locator('.goals-wrap .goal-card', { hasText: 'هدف الشهر' })).toHaveCount(0);
+});
+
+test('period windows are correct (weekly Sat→Fri, monthly whole month, quarterly whole quarter)', async ({ page }) => {
+  await openGoals(page);
+  await makeThree(page);
+  const win = await page.evaluate(() => {
+    const T = window.AyyamTime, all = window.AyyamGoalsUI._peek();
+    const by = (n) => Object.values(all).find((g) => g.title === n);
+    const w = by('هدف الأسبوع'), m = by('هدف الشهر'), q = by('هدف الربع');
+    return {
+      wStartDay: T.dayCode(w.start_date), wLen: T.diffDays(w.end_date, w.start_date),
+      mStart: m.start_date.slice(8), mEndMonth: m.end_date.slice(5, 7) === m.start_date.slice(5, 7),
+      qStartMonth: Number(q.start_date.slice(5, 7)), qEnd: q.end_date.slice(5),
+    };
+  });
+  expect(win.wStartDay).toBe('sat');
+  expect(win.wLen).toBe(6);
+  expect(win.mStart).toBe('01');
+  expect(win.mEndMonth).toBe(true);
+  expect([1, 4, 7, 10]).toContain(win.qStartMonth); // quarter start month
+});
+
+test('a completed goal stays visible in its period tab', async ({ page }) => {
+  await openGoals(page);
+  await createGoal(page, { name: 'هدف مكتمل', period: 'هذا الأسبوع', measure: 'عدد مرات', target: 3 });
+  await page.locator('.goal-card', { hasText: 'هدف مكتمل' }).click();
+  await page.locator('.goal-act', { hasText: 'تحديد كمكتمل' }).click();
+  await page.locator('#goalDetailOverlay .btn.ghost', { hasText: 'إغلاق' }).click();
+  await selectTab(page, 'الأسبوع');
+  const card = page.locator('.goals-wrap:not(.goals-wrap-past) .goal-card', { hasText: 'هدف مكتمل' });
+  await expect(card).toBeVisible();
+  await expect(card.locator('.goal-badge', { hasText: 'مكتمل' })).toBeVisible();
+});
+
+test('archived goals leave the main list and live under السابقة والمؤرشفة', async ({ page }) => {
+  await openGoals(page);
+  await createGoal(page, { name: 'هدف مؤرشف', period: 'هذا الأسبوع', measure: 'عدد مرات', target: 3 });
+  await page.locator('.goal-card', { hasText: 'هدف مؤرشف' }).click();
+  await page.locator('.goal-act', { hasText: 'أرشفة' }).click();
+  await selectTab(page, 'الأسبوع');
+  await expect(page.locator('.goals-wrap:not(.goals-wrap-past) .goal-card', { hasText: 'هدف مؤرشف' })).toHaveCount(0);
+  await page.locator('.goals-past-toggle').click();
+  await expect(page.locator('.goals-wrap-past .goal-card', { hasText: 'هدف مؤرشف' })).toBeVisible();
+});
+
+test('the selected tab persists across a reload', async ({ page }) => {
+  await openGoals(page);
+  await selectTab(page, 'الشهر');
+  await page.reload();
+  await expect(page.locator('.task').first()).toBeVisible({ timeout: 15000 });
+  await page.locator('#navGoals').click();
+  await expect(page.locator('.goal-tab.on', { hasText: 'الشهر' })).toBeVisible();
+});
+
+test('each empty tab shows its own prompt', async ({ page }) => {
+  await openGoals(page);
+  await selectTab(page, 'الأسبوع');
+  await expect(page.locator('.goals-empty-title')).toHaveText('حدّد ما تريد تحقيقه هذا الأسبوع');
+  await selectTab(page, 'الشهر');
+  await expect(page.locator('.goals-empty-title')).toHaveText('ما النتيجة التي تريد الوصول إليها هذا الشهر؟');
+  await selectTab(page, 'الربع');
+  await expect(page.locator('.goals-empty-title')).toContainText('٩٠ يومًا');
+});
+
 test('milestones goal: add two milestones → checking one shows 50%', async ({ page }) => {
   await openGoals(page);
   await page.locator('#goalNewBtn, .goals-empty .btn').first().click();

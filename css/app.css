@@ -704,3 +704,11 @@
 .goal-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
 .goal-act{flex:1 1 44%;}
 .btn.danger{background:transparent;border:1px solid #c0564f66;color:#d8756c;}
+/* period tabs */
+.goal-tabs{display:flex;gap:8px;margin:4px 0 14px;}
+.goal-tab{flex:1;background:var(--surface);border:1px solid var(--line);color:var(--text-dim);border-radius:999px;padding:9px 6px;font-family:'Cairo',sans-serif;font-size:13.5px;cursor:pointer;}
+.goal-tab.on{background:var(--dhuhr);color:var(--color-on-primary);border-color:var(--dhuhr);font-weight:700;}
+/* secondary (past + archived) */
+.goals-past{margin-top:18px;}
+.goals-past-toggle{width:100%;background:none;border:1px dashed var(--line);color:var(--text-dim);border-radius:12px;padding:10px;font-family:inherit;font-size:13px;cursor:pointer;}
+.goals-wrap-past{margin-top:10px;opacity:.72;}
