@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { prepare, resetBackend, skipOnboarding } from '../helpers.mjs';
 
-// Goals UI — Private Pilot (Stage B). Enablement is SERVER-authoritative: an account sees Goals only when it is
-// on the server allowlist (ayyam_goals_pilot → ayyam_goals_enabled RPC). No localStorage/query path. These tests
-// sign up a real account, authorize it via /__ctl/goals-pilot, reload, then drive the UI.
+// Goals UI — General Availability. Enablement is SERVER-authoritative (ayyam_goals_enabled RPC) and, since GA
+// (migration 20261009000100), returns true for ANY authenticated account — there is no allowlist step and no
+// localStorage/query path. These tests sign up a real account, reload, then drive the UI.
 test.beforeEach(async ({ request }) => { await resetBackend(request); });
 test.describe.configure({ retries: 2, timeout: 90000 });
 
@@ -30,10 +30,9 @@ async function reloadToGoals(page) {
   await expect(page.locator('#goalsView')).toBeVisible();
 }
 
-async function openGoals(page, email = 'pilot@t.test') {
-  await signup(page, email);
-  await page.request.post('/__ctl/goals-pilot?email=' + encodeURIComponent(email)); // allowlist this account
-  await reloadToGoals(page);                                                         // server flag now turns Goals on
+async function openGoals(page, email = 'owner@t.test') {
+  await signup(page, email);   // GA: every authenticated account has Goals — no allowlist step
+  await reloadToGoals(page);   // server flag (ayyam_goals_enabled) turns Goals on for any account
 }
 
 async function createGoal(page, { name, period = null, measure = null, target = null }) {
@@ -110,20 +109,15 @@ test('a goal survives a reload (persisted in the account namespace + synced to t
   await expect(page.locator('.goal-card', { hasText: 'هدف يبقى' })).toBeVisible();
 });
 
-// ---------------- Stage B: server-authoritative enablement + backend write-guard ----------------
-test('an account NOT on the allowlist never sees Goals (no nav item, no screen)', async ({ page }) => {
-  await signup(page, 'nopilot@t.test'); // signed in, but NOT authorized
-  await expect(page.locator('#mainView')).toBeVisible();
-  await expect(page.locator('#navGoals')).toBeHidden();                 // the nav item stays hidden
-  await expect(page.locator('#bottomNav .bnav-item:visible')).toHaveCount(5);
-  // even forcing the localStorage/query flag does NOT reveal it (server is the only authority)
-  await page.evaluate(() => { try { localStorage.setItem('ayyam_ff_goals', '1'); } catch (e) {} });
-  await page.goto('/?goals=1');
-  await expect(page.locator('#mainView')).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('#navGoals')).toBeHidden();
+// ---------------- GA: server-authoritative enablement is universal ----------------
+test('GA: any freshly signed-up account sees Goals (no allowlist step needed)', async ({ page }) => {
+  await signup(page, 'fresh@t.test'); // just signed in — nothing else
+  await reloadToGoals(page);          // ayyam_goals_enabled → true for every authenticated account
+  await expect(page.locator('#navGoals')).toBeVisible();
+  await expect(page.locator('#goalsView')).toBeVisible();
 });
-// (the backend write-guard — a non-allowlisted account refused a direct goal:* write — is proven in
-//  tests/db/goals-pilot.test.mjs, exercising ayyam_commit_v2 at the SQL/RLS layer.)
+// (enablement + the retained writer_schema gate at the SQL layer are proven in tests/db/goals-ga.test.mjs;
+//  the pilot-era write-guard is still regression-guarded, pinned to its migration, in tests/db/goals-pilot.test.mjs.)
 
 // ---------------- P1-D: period tabs ----------------
 async function selectTab(page, label) {

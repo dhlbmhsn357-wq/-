@@ -87,7 +87,7 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.3.6'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  const APP_VERSION = '5.4.0'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
   // Goals (Phase 1) — SERVER-AUTHORITATIVE enablement (Stage B Private Pilot). The Goals surface is shown ONLY
   // when the server's allowlist says this authenticated account is enabled (AyyamAccount.goalsEnabled →
   // ayyam_goals_enabled RPC). There is deliberately NO localStorage/query-param path: another user cannot reveal

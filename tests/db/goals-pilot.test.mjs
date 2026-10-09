@@ -1,10 +1,16 @@
 // Stage B — Private Goals Pilot: server-side allowlist (ayyam_goals_pilot) + ayyam_goals_enabled RPC + the
 // ayyam_commit_v2 write-guard. Only an allow-listed account may write a goal:* register; everyone else is
 // unaffected and cannot start writing goals even by calling the RPC directly.
+// NOTE: Goals later went GA (migration 20261009000100) which removes this pilot write-guard. These tests
+// therefore pin the schema to the pilot migration era (upTo) so they keep validating the pilot gate as it
+// existed; the GA end-state is covered by goals-ga.test.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { freshDb, createUser, asUser } from './helpers.mjs';
+import { freshDb as freshDbAll, createUser, asUser } from './helpers.mjs';
+
+const PILOT_ERA = '20261006000200';
+const freshDb = () => freshDbAll({ upTo: PILOT_ERA });
 
 const goalData = { v: 2, epoch: 0, reg: { 'p:theme': { val: 'night', t: 1, by: '' }, 'goal:g1': { val: { id: 'g1', title: 'هدف' }, t: 1, by: '' } }, tomb: {} };
 const plainData = { v: 2, epoch: 0, reg: { 'p:theme': { val: 'night', t: 1, by: '' } }, tomb: {} };
