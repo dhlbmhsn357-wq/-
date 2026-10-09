@@ -371,6 +371,6 @@
   global.AyyamModel = {
     DAY_CODES, TOMBSTONE_TTL_MS,
     sanitizeMaterialized, flatten, empty, enrich, materialize, toEnriched, merge, pruneTombstones, bumpEpoch, migrateGeneration,
-    defaultPrefs, emptyTemplate,
+    defaultPrefs, emptyTemplate, cleanGoals,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

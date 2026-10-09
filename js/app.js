@@ -87,11 +87,14 @@
   // If the Supabase library failed to load (CDN down / offline first run) the app still works locally.
   const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const SYNC_TIMEOUT_MS = 10000;
-  const APP_VERSION = '5.3.6'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
-  // Goals (Phase 1) feature flag — OFF for everyone by default. Enabled only where we opt in (our own device
-  // first): localStorage ayyam_ff_goals='1' or ?goals=1. The Goals data model always round-trips regardless of
-  // this flag (it only gates the UI surface), so flipping it off never loses a goal.
-  const GOALS_V1 = (function(){ try{ return localStorage.getItem('ayyam_ff_goals')==='1' || /[?&]goals=1(?:&|$)/.test(location.search); }catch(e){ return false; } })();
+  const APP_VERSION = '5.4.0'; // web/PWA line — bump per release; kept in step with sw.js SW_VERSION (Android shows its own APK versionName)
+  // Goals (Phase 1) — SERVER-AUTHORITATIVE enablement (Stage B Private Pilot). The Goals surface is shown ONLY
+  // when the server's allowlist says this authenticated account is enabled (AyyamAccount.goalsEnabled →
+  // ayyam_goals_enabled RPC). There is deliberately NO localStorage/query-param path: another user cannot reveal
+  // Goals by setting a flag, and the backend also refuses any goal:* write from a non-allow-listed account. The
+  // Goals data model still round-trips for everyone (it only ever carries {} for a non-pilot user), so nothing is
+  // lost. `goalsOn` flips to true asynchronously after auth, only for an allow-listed account.
+  let goalsOn = false;
   // Update manifest for the DIRECT-APK Android updater. It uses GitHub's stable "latest release" redirect,
   // so the URL never changes and always resolves to the most recently PUBLISHED release's update.json (the
   // release workflow generates it with the real versionCode/sha256/apkUrl and attaches it). The end user
@@ -343,11 +346,15 @@
     // Recurrence engine state (dormant until R2 activation): carried through so nothing is lost on
     // load/import/export/round-trip. cleanRoutines mirrors js/routines-model.js.
     const routines = (window.AyyamRoutines ? window.AyyamRoutines.cleanRoutines(src.routines) : {});
+    // Goals (Phase 1): carried through this bundle sanitize too. Any setState(sanitizeBundle(...)) path
+    // (notably the routines migration, which rebuilds the bundle) would otherwise silently drop a live
+    // goal. Mirrors sync-model's cleanGoals; empty {} for every non-pilot user, so nothing else changes.
+    const goals = (M && M.cleanGoals) ? M.cleanGoals(src.goals) : (isObj(src.goals) ? src.goals : {});
     const migrationDate = DATE_KEY_RE.test(src.migrationDate) ? src.migrationDate : '';
     // migrationVersion: the one-time-migration signal. Persisted (via sync-model migv register) so migration
     // is PERMANENT and never re-derives routines from the retained legacy template on a later load/pull.
     const migrationVersion = (Number.isFinite(src.migrationVersion) && src.migrationVersion >= 1) ? 1 : 0;
-    return {template, logs, prefs, tplArchive, routines, migrationDate, migrationVersion};
+    return {template, logs, prefs, tplArchive, routines, goals, migrationDate, migrationVersion};
   }
 
   // The v2 conflict engine lives in js/sync-model.js (LWW registers + tombstones + epoch). The old
@@ -958,6 +965,7 @@
       const today = AyyamTime.todayKey(tz);
       if(store){ try{ await store.saveRecovery({ reason:'pre-routines-migration', bundle: clone(b) }); }catch(_){} }
       const out = AyyamRoutines.migrate(b, today, tz);
+      out.goals = b.goals; // AyyamRoutines.migrate predates Goals and doesn't carry them — preserve across the generation (no data loss)
       if(!out.migrationDate || (hasTemplateTasks(b.template) && Object.keys(out.routines||{}).length===0)){
         throw new Error('invalid migration output'); // rollback-safe: do not activate on a bad result
       }
@@ -980,6 +988,7 @@
     try{
       const b = currentBundle(); const tz = dayTz(); const today = AyyamTime.todayKey(tz);
       const out = AyyamRoutines.migrate(b, today, tz);
+      out.goals = b.goals; // preserve Goals across the routines generation (migrate() predates them)
       if(!out.migrationDate) return false;
       setState(sanitizeBundle(out)); routinesActivated = true;
       return true;
@@ -2009,7 +2018,7 @@
   // bottom nav can jump directly between any two screens without round-tripping through Today. No reload,
   // no app-shell rebuild: state/session/sync are untouched; only which view is visible changes.
   const BASE_SCREENS = { today:'mainView', calendar:'calendarView', routine:'routineView', progress:'reportsView', settings:'settingsView' };
-  if(GOALS_V1) BASE_SCREENS.goals = 'goalsView';   // Goals screen only exists when the flag is on
+  // BASE_SCREENS.goals is registered lazily by enableGoalsUI() once the server confirms this account is on the pilot allowlist.
   let currentScreen = 'today';
   function renderScreen(name){
     if(name==='today') render();
@@ -3064,13 +3073,20 @@
   authReady = true;   // from now on, real auth transitions (sign-in/out/switch) trigger a controlled reload
   try{ setupAccountUI(); }catch(e){}
   try{ setupPinToggle(); }catch(e){}
-  // Goals (Phase 1, flag-gated): wire the UI to app state + sync, and reveal its nav item. The data model
-  // always round-trips regardless; this only exposes the surface where we've opted in.
-  if(GOALS_V1 && globalThis.AyyamGoalsUI){
+  // Goals (Private Pilot): enable the surface ONLY if the server's allowlist authorizes this account. Server
+  // says so → register the screen, wire the UI to state+sync, reveal the nav item. Account mode only (goals live
+  // in the account's own per-user payload). No localStorage/query path; a non-allow-listed account never sees it.
+  function enableGoalsUI(){
+    if(goalsOn || !globalThis.AyyamGoalsUI) return;
     try{
+      goalsOn = true;
+      BASE_SCREENS.goals = 'goalsView';
       AyyamGoalsUI.init({ getGoals:()=>goals, saveGoals:(m)=>{ goals = m || {}; saveBundle('sync'); }, now:()=>Date.now(), todayKey:()=>todayKey() });
       const ng = $('navGoals'); if(ng) ng.classList.remove('hidden');
     }catch(e){}
+  }
+  if(accountMode && sb && AC() && globalThis.AyyamGoalsUI){
+    AC().goalsEnabled(sb).then(function(ok){ if(ok) enableGoalsUI(); }).catch(function(){});
   }
   if(accountMode){ track('app_open'); checkAdmin(); checkOnboarding(); updateGreeting(); } // P4 analytics + admin reveal + P5 onboarding + greeting
   // Settings → "إعادة الجولة التعريفية" (account users; the tour is client-side, completion stays server-side).

@@ -155,11 +155,17 @@
   function onAuthChange(sb, cb) {
     try { return sb.auth.onAuthStateChange((event, session) => cb(session, event)); } catch (e) { return null; }
   }
+  // Private Goals Pilot (Stage B): is THIS account on the server-side allowlist? Server-authoritative — the only
+  // control for showing/writing Goals. Never trusts the client. Returns false on any error (fail closed).
+  async function goalsEnabled(sb) {
+    try { var r = await rpcRes(sb, 'ayyam_goals_enabled', {}); return !r.error && !!(r.data && r.data.enabled === true); }
+    catch (e) { return false; }
+  }
 
   global.AyyamAccount = {
     LEGACY_DB, dbNameFor,
     v2Backend, legacyBackend, migrate,
     getSession, userIdOf, signUp, signIn, signOut, resetPassword, updatePassword, setSessionFromUrl, onAuthChange,
-    classifyRpcError,
+    goalsEnabled, classifyRpcError,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
